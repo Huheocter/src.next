@@ -63,6 +63,18 @@ Risks and required work:
 - The bottom-toolbar flag affects tab-group state and cannot be treated as a purely visual layout change; its interactions with tab-strip visibility, multi-window mode, orientation, and tab creation must be tested.
 - These changes are not applied to the Chromium 155 branch yet. The next code change should be a small, coherent vertical slice (preference + current UI integration + tests), not a partial copy of the old layout snippets.
 
+## Fourth feature review: tab switcher compatibility details
+
+A closer review of the legacy `TabListCoordinator` / `TabListMediator` changes identifies concrete reasons not to transplant those snippets directly:
+
+- The legacy code spreads `active_tabswitcher` preference reads across the coordinator, mediator, factory, and binders instead of resolving one validated mode at a single boundary. Partial porting could make the main switcher, group dialog, selection editor, and scroll behavior disagree.
+- Some legacy comparisons use Java reference identity (`componentName != "..."`) instead of string value equality. This can behave incorrectly when the same component name is represented by a different String object.
+- A legacy read uses `getString("active_tabswitcher", "classic")` in a span-count condition. With no stored preference, the default itself selects classic layout, unlike the other reads whose default is `default`. That can unintentionally force one-column layout for users who never selected classic mode.
+- The classic layout uses `Resources.getSystem().getDisplayMetrics().density` for offsets instead of the active view/context's display metrics, and injects negative item-decoration spacing. This needs layout tests across display density, orientation, and multi-window rather than a textual port.
+- Old code also contains commented-out alternate mode/span logic. Those comments are not an implementation contract and should not be revived as code without checking Chromium 155's current architecture.
+
+Decision: keep Chromium 155's current tab management implementation as the base. If classic mode is ported, first introduce a single preference parser with an explicit default and enum-like validated values; then wire that mode into the current factory/coordinator and add tests for default/grid/list/classic, low-end-device behavior, orientation, dialogs, and scroll restoration. Do not yet modify production tab UI code until those test seams are identified.
+
 ## Build feasibility gate
 
 The official Chromium Android build guide lists a 64-bit Linux machine, at least 8 GB RAM (more than 16 GB recommended), and at least 100 GB free disk as system requirements. A normal Android browser build uses GN and then `autoninja -C out/Default chrome_public_apk`. Therefore a green inventory workflow is not evidence of a build, and a standard small hosted runner should not be assumed capable of producing the full APK without a verified build environment.
