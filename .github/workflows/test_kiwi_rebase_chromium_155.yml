@@ -1,0 +1,33 @@
+name: "Test Kiwi integration with Chromium 155"
+
+on:
+  push:
+    branches:
+      - upgrade/kiwi-chromium-155-integration
+
+permissions:
+  contents: write
+
+jobs:
+  rebase-kiwi:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Rebase Kiwi onto the updated Chromium branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin chromium kiwi
+          git checkout --detach origin/kiwi
+          git checkout -b upgrade/kiwi-chromium-155-result
+          git -c core.editor=true rebase origin/chromium
+
+      - name: Push integration candidate to a new branch
+        run: git push origin HEAD:refs/heads/upgrade/kiwi-chromium-155-result
