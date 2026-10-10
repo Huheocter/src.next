@@ -9,6 +9,8 @@ on:
       - ".github/workflows/port_kiwi_patch_chromium_155.yml"
       - "tools/kiwi_port_inventory.py"
       - "tools/test_kiwi_port_inventory.py"
+      - "tools/kiwi_patch_risk_scan.py"
+      - "tools/test_kiwi_patch_risk_scan.py"
       - "docs/CHROMIUM_155_KIWI_PORT_AUDIT.md"
 
 permissions:
@@ -30,13 +32,21 @@ jobs:
       - name: Test inventory path categorization
         run: python3 -m unittest tools/test_kiwi_port_inventory.py -v
 
+      - name: Test patch risk scanner
+        run: python3 -m unittest tools/test_kiwi_patch_risk_scan.py -v
+
       - name: Generate categorized inventory
         run: python3 tools/kiwi_port_inventory.py
+
+      - name: Scan added lines for review flags
+        run: python3 tools/kiwi_patch_risk_scan.py
 
       - name: Upload inventory report
         uses: actions/upload-artifact@v4
         with:
           name: kiwi-chromium-155-port-inventory
-          path: kiwi-port-inventory.md
+          path: |
+            kiwi-port-inventory.md
+            kiwi-patch-risk-scan.md
           if-no-files-found: error
           retention-days: 14
