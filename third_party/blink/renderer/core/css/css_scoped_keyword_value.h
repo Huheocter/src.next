@@ -27,9 +27,13 @@ class CORE_EXPORT CSSScopedKeywordValue : public CSSValue {
   }
 
   const TreeScope* GetTreeScope() const { return tree_scope_.Get(); }
+  const TreeScope* GetPopulatedTreeScope() const {
+    CHECK(IsScopedValue());
+    return GetTreeScope();
+  }
   CSSValueID GetValueID() const { return value_id_; }
 
-  WTF::String CustomCSSText() const;
+  String CustomCSSText() const;
 
   const CSSScopedKeywordValue& PopulateWithTreeScope(
       const TreeScope* tree_scope) const;

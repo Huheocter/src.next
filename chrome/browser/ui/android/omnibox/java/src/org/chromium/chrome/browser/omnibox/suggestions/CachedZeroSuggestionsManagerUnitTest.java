@@ -23,6 +23,7 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.browser.omnibox.suggestions.CachedZeroSuggestionsManager.SearchEngineMetadata;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
+import org.chromium.components.metrics.OmniboxEventProtosIntDef.PageClassification;
 import org.chromium.components.omnibox.AutocompleteMatch;
 import org.chromium.components.omnibox.AutocompleteMatchBuilder;
 import org.chromium.components.omnibox.AutocompleteResult;
@@ -37,7 +38,7 @@ import java.util.List;
 /** Unit tests for {@link CachedZeroSuggestionsManager}. */
 @RunWith(BaseRobolectricTestRunner.class)
 public class CachedZeroSuggestionsManagerUnitTest {
-    private static final int PAGE_CLASS = 0;
+    private static final @PageClassification int PAGE_CLASS = PageClassification.INVALID_SPEC;
     private static final AutocompleteResult EMPTY_RESULT = AutocompleteResult.fromCache(null, null);
 
     /**
@@ -110,7 +111,7 @@ public class CachedZeroSuggestionsManagerUnitTest {
 
     @Test
     public void saveToCache_DoNotCacheClipboardSuggestions() {
-        var mix_list =
+        var mixList =
                 Arrays.asList(
                         createSuggestionBuilder("test", 1, OmniboxSuggestionType.CLIPBOARD_IMAGE)
                                 .build(),
@@ -120,15 +121,15 @@ public class CachedZeroSuggestionsManagerUnitTest {
                                 .build(),
                         createSuggestionBuilder("test", 4, OmniboxSuggestionType.SEARCH_HISTORY)
                                 .build());
-        var expected_list =
+        var expectedList =
                 Arrays.asList(
                         createSuggestionBuilder("test", 2, OmniboxSuggestionType.HISTORY_URL)
                                 .build(),
                         createSuggestionBuilder("test", 4, OmniboxSuggestionType.SEARCH_HISTORY)
                                 .build());
 
-        var dataToCache = AutocompleteResult.fromCache(mix_list, null);
-        var dataToExpected = AutocompleteResult.fromCache(expected_list, null);
+        var dataToCache = AutocompleteResult.fromCache(mixList, null);
+        var dataToExpected = AutocompleteResult.fromCache(expectedList, null);
         CachedZeroSuggestionsManager.saveToCache(PAGE_CLASS, dataToCache);
 
         var dataFromCache = CachedZeroSuggestionsManager.readFromCache(PAGE_CLASS);
@@ -245,7 +246,7 @@ public class CachedZeroSuggestionsManagerUnitTest {
         assertAutocompleteResultEquals(dataToCache, dataFromCache);
     }
 
-    private void saveJumpStartContext(String url, int pageClass) {
+    private void saveJumpStartContext(String url, @PageClassification int pageClass) {
         CachedZeroSuggestionsManager.saveJumpStartContext(
                 new CachedZeroSuggestionsManager.JumpStartContext(new GURL(url), pageClass));
     }

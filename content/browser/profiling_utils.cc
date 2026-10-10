@@ -7,7 +7,6 @@
 
 #include "base/command_line.h"
 #include "base/functional/bind.h"
-#include "base/functional/callback_forward.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
@@ -63,7 +62,8 @@ void AskAllChildrenToDumpProfilingData(base::OnceClosure callback) {
   // Ask all the renderer processes to dump their profiling data.
   for (RenderProcessHost::iterator i(RenderProcessHost::AllHostsIterator());
        !i.IsAtEnd(); i.Advance()) {
-    DCHECK(!i.GetCurrentValue()->GetProcess().is_current());
+    CHECK(!i.GetCurrentValue()->GetProcess().is_current(),
+          base::NotFatalUntil::M159);
     if (!i.GetCurrentValue()->IsInitializedAndNotDead())
       continue;
     i.GetCurrentValue()->DumpProfilingData(base::BindOnce(

@@ -6,11 +6,16 @@ package org.chromium.chrome.browser.toolbar.top;
 
 import android.graphics.Rect;
 
+import androidx.annotation.VisibleForTesting;
+
 import org.jni_zero.JNINamespace;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.build.annotations.NullMarked;
+
 /** Utility class for creating native resources. */
 @JNINamespace("android")
+@NullMarked
 public class ResourceFactory {
     public static long createToolbarContainerResource(
             Rect toolbarPosition, Rect locationBarPosition, int shadowHeight) {
@@ -28,7 +33,8 @@ public class ResourceFactory {
     }
 
     @NativeMethods
-    interface Natives {
+    @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
+    public interface Natives {
         long createToolbarContainerResource(
                 int toolbarLeft,
                 int toolbarTop,

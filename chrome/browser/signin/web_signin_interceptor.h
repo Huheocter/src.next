@@ -9,14 +9,12 @@
 #include <optional>
 
 #include "base/cancelable_callback.h"
-#include "base/feature_list.h"
 #include "base/functional/callback_forward.h"
-#include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/scoped_observation.h"
 #include "base/time/time.h"
 #include "chrome/browser/ui/webui/signin/signin_utils.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/signin/core/browser/account_preview_data_service.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "google_apis/gaia/core_account_id.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -25,8 +23,9 @@ namespace content {
 class WebContents;
 }
 
-struct AccountInfo;
-class Browser;
+class AccountInfo;
+class BrowserWindowInterface;
+class SigninUIError;
 
 // Outcome of the interception heuristic (decision whether the interception
 // bubble is shown or not).
@@ -89,8 +88,12 @@ enum class SigninInterceptionHeuristicOutcome {
   // This is not the first account in the identity manager but there is no
   // primary account.
   kAbortNotFirstAccountButNoPrimaryAccount = 21,
+  // The profile management disclaimer service is already handling an account.
+  kAbortDisclaimerServiceInProgress = 22,
+  // Account is already connected to the primary account.
+  kAbortAccountConnected = 23,
 
-  kMaxValue = kAbortNotFirstAccountButNoPrimaryAccount,
+  kMaxValue = kAbortAccountConnected,
 };
 
 // Returns whether the heuristic outcome is a success (the signin should be
@@ -131,7 +134,12 @@ enum class SigninInterceptionDismissReason {
   kEscKey = 0,
   kIdentityPillPressed = 1,
 
-  kMaxValue = kIdentityPillPressed,
+  // The user is no longer eligible for the interception. This can happen for
+  // example if the user signs out of the account while the interception is in
+  // progress.
+  kUserNotEligible = 2,
+
+  kMaxValue = kUserNotEligible,
 };
 
 // The ScopedWebSigninInterceptionBubbleHandle closes the signin intercept
@@ -160,12 +168,16 @@ class WebSigninInterceptor {
    public:
     // Parameters for interception bubble UIs.
     struct BubbleParameters {
-      BubbleParameters(SigninInterceptionType interception_type,
-                       AccountInfo intercepted_account,
-                       AccountInfo primary_account,
-                       SkColor profile_highlight_color = SkColor(),
-                       bool show_link_data_option = false,
-                       bool show_managed_disclaimer = false);
+      BubbleParameters(
+          SigninInterceptionType interception_type,
+          AccountInfo intercepted_account,
+          AccountInfo primary_account,
+          SkColor profile_highlight_color = SkColor(),
+          bool show_link_data_option = false,
+          bool show_managed_disclaimer = false,
+          std::optional<
+              signin::AccountPreviewDataService::AccountPreviewPreference>
+              account_preview_preference = std::nullopt);
 
       BubbleParameters(const BubbleParameters& copy);
       BubbleParameters& operator=(const BubbleParameters&);
@@ -177,6 +189,8 @@ class WebSigninInterceptor {
       SkColor profile_highlight_color;
       bool show_link_data_option;
       bool show_managed_disclaimer;
+      std::optional<signin::AccountPreviewDataService::AccountPreviewPreference>
+          account_preview_preference;
     };
 
     virtual ~Delegate() = default;
@@ -213,9 +227,12 @@ class WebSigninInterceptor {
     // Shows the first run experience for `account_id` in `browser` opened for
     // a newly created profile.
     virtual void ShowFirstRunExperienceInNewProfile(
-        Browser* browser,
+        BrowserWindowInterface* browser,
         const CoreAccountId& account_id,
         SigninInterceptionType interception_type) = 0;
+
+    virtual void ShowSigninError(content::WebContents* web_contents,
+                                 const SigninUIError& error) = 0;
   };
 
   WebSigninInterceptor(const WebSigninInterceptor&) = delete;

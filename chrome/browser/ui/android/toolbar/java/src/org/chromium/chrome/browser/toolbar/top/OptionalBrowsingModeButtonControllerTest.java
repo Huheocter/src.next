@@ -10,22 +10,22 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-import android.content.res.Resources;
-
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.robolectric.annotation.Config;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.toolbar.ButtonDataImpl;
-import org.chromium.chrome.browser.toolbar.ButtonDataProvider;
 import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarButtonVariant;
+import org.chromium.chrome.browser.toolbar.optional_button.ButtonData.ButtonSpec;
+import org.chromium.chrome.browser.toolbar.optional_button.ButtonDataImpl;
+import org.chromium.chrome.browser.toolbar.optional_button.ButtonDataProvider;
 import org.chromium.chrome.browser.user_education.UserEducationHelper;
 
 import java.util.Arrays;
@@ -33,8 +33,8 @@ import java.util.List;
 
 /** Tests for {@link OptionalBrowsingModeButtonController}. */
 @RunWith(BaseRobolectricTestRunner.class)
-@Config(manifest = Config.NONE)
 public class OptionalBrowsingModeButtonControllerTest {
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock UserEducationHelper mUserEducationHelper;
     @Mock ToolbarLayout mToolbarLayout;
     @Mock ButtonDataProvider mButtonDataProvider1;
@@ -54,8 +54,6 @@ public class OptionalBrowsingModeButtonControllerTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
-
         mNewTabButtonData = createButtonData(AdaptiveToolbarButtonVariant.NEW_TAB);
         mShareButtonData = createButtonData(AdaptiveToolbarButtonVariant.SHARE);
         mVoiceButtonData = createButtonData(AdaptiveToolbarButtonVariant.VOICE);
@@ -202,16 +200,9 @@ public class OptionalBrowsingModeButtonControllerTest {
 
     private static ButtonDataImpl createButtonData(
             @AdaptiveToolbarButtonVariant int buttonVariant) {
+        ButtonSpec.Builder buttonSpecBuilder =
+                new ButtonSpec.Builder(null, "", false).setButtonVariant(buttonVariant);
         return new ButtonDataImpl(
-                /* canShow= */ true,
-                /* drawable= */ null,
-                /* onClickListener= */ null,
-                /* contentDescription= */ "",
-                /* supportsTinting= */ false,
-                /* iphCommandBuilder= */ null,
-                /* isEnabled= */ true,
-                buttonVariant,
-                /* tooltipTextResId= */ Resources.ID_NULL,
-                /* showHoverHighlight= */ false);
+                /* canShow= */ true, /* isEnabled= */ true, buttonSpecBuilder.build());
     }
 }

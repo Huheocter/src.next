@@ -117,7 +117,7 @@ class CORE_EXPORT LayoutInline : public LayoutBoxModelObject {
 
   void Trace(Visitor*) const override;
 
-  static LayoutInline* CreateAnonymous(Document*);
+  static LayoutInline* CreateAnonymous(Document&);
 
   LayoutObject* FirstChild() const {
     NOT_DESTROYED();
@@ -137,26 +137,18 @@ class CORE_EXPORT LayoutInline : public LayoutBoxModelObject {
   void AddChild(LayoutObject* new_child,
                 LayoutObject* before_child = nullptr) override;
 
-  // A block-in-inline became floated or out-of-flow positioned. The anonymous
-  // wrapper around it may therefore need to be removed, if it no longer
-  // contains any in-flow blocks at all.
-  void BlockInInlineBecameFloatingOrOutOfFlow(
-      LayoutBlockFlow* anonymous_block_child);
-
   Element* GetNode() const {
     NOT_DESTROYED();
     return To<Element>(LayoutBoxModelObject::GetNode());
   }
 
-  LayoutUnit MarginLeft() const final;
-  LayoutUnit MarginRight() const final;
-  LayoutUnit MarginTop() const final;
-  LayoutUnit MarginBottom() const final;
+  PhysicalBoxStrut MarginOutsets() const final;
 
   // Returns the bounding box of all quads returned by `LocalQuadsForSelf`.
   gfx::RectF LocalBoundingBoxRectF() const;
 
-  gfx::RectF LocalBoundingBoxRectForAccessibility() const final;
+  gfx::RectF LocalBoundingBoxRectForAccessibility(
+      IncludeDescendants include_descendants) const final;
 
   PhysicalRect PhysicalLinesBoundingBox() const;
   PhysicalRect LinesVisualOverflowBoundingBox() const;
@@ -196,7 +188,7 @@ class CORE_EXPORT LayoutInline : public LayoutBoxModelObject {
   }
   void UpdateShouldCreateBoxFragment();
 
-  PhysicalRect LocalCaretRect(int) const final;
+  PhysicalRect LocalCaretRect(int, CaretShape) const final;
 
   // When this LayoutInline doesn't generate line boxes of its own, regenerate
   // the rects of the line boxes and hit test the rects.
@@ -213,7 +205,7 @@ class CORE_EXPORT LayoutInline : public LayoutBoxModelObject {
   }
 
   PhysicalRect AbsoluteBoundingBoxRectHandlingEmptyInline(
-      MapCoordinatesFlags = 0) const final;
+      MapCoordinatesFlags = {}) const final;
 
   const char* GetName() const override {
     NOT_DESTROYED();
@@ -223,28 +215,39 @@ class CORE_EXPORT LayoutInline : public LayoutBoxModelObject {
   PhysicalRect DebugRect() const override;
 
  protected:
-  void WillBeDestroyed() override;
+  void WillBeDestroyed(const ComputedStyle*) override;
 
   void InLayoutNGInlineFormattingContextWillChange(bool) final;
 
-  void StyleDidChange(StyleDifference, const ComputedStyle* old_style) override;
+  void StyleDidChange(StyleDifference,
+                      const ComputedStyle* old_style,
+                      const ComputedStyle& new_style,
+                      const StyleChangeContext&) override;
 
   void InvalidateDisplayItemClients(PaintInvalidationReason) const override;
 
   void QuadsInAncestorInternal(Vector<gfx::QuadF>&,
                                const LayoutBoxModelObject* ancestor,
-                               MapCoordinatesFlags) const override;
-
-  PhysicalOffset OffsetFromContainerInternal(
-      const LayoutObject*,
-      MapCoordinatesFlags mode) const final;
+                               MapCoordinatesFlags,
+                               BoxQuadType) const override;
 
  private:
-  bool AbsoluteTransformDependsOnPoint(const LayoutObject& object) const;
   void QuadsForSelfInternal(Vector<gfx::QuadF>& quads,
                             const LayoutBoxModelObject* ancestor,
                             MapCoordinatesFlags mode,
-                            bool map_to_ancestor) const;
+                            bool map_to_ancestor,
+                            BoxQuadType box_type = BoxQuadType::kBorder) const;
+
+  // Collects rectangles that the outline of this object would be drawing along
+  // the outside of, even if the object isn't styled with a outline for now.
+  // If include_descendants is true, then descendant rects are aggregated,
+  // causing visible overflow to be included (note that visible overflow is hit
+  // testable).
+  void AddOutlineRectsInternal(OutlineRectCollector&,
+                               OutlineInfo*,
+                               const PhysicalOffset& additional_offset,
+                               OutlineType,
+                               IncludeDescendants include_descendants) const;
 
   LayoutObjectChildList* VirtualChildren() final {
     NOT_DESTROYED();
@@ -280,8 +283,6 @@ class CORE_EXPORT LayoutInline : public LayoutBoxModelObject {
   template <typename PhysicalRectCollector>
   void CollectLineBoxRects(const PhysicalRectCollector&) const;
 
-  void AddChildIgnoringContinuation(LayoutObject* new_child,
-                                    LayoutObject* before_child = nullptr) final;
   void AddChildAsBlockInInline(LayoutObject* new_child,
                                LayoutObject* before_child);
 
@@ -290,7 +291,9 @@ class CORE_EXPORT LayoutInline : public LayoutBoxModelObject {
   LayoutBox* CreateAnonymousBoxToSplit(
       const LayoutBox* box_to_split) const final;
 
-  void Paint(const PaintInfo&) const final;
+  void MarkMayContainAnchor() final;
+
+  void Paint(const PaintInfo&) const override;
 
   bool NodeAtPoint(HitTestResult&,
                    const HitTestLocation&,
@@ -299,25 +302,18 @@ class CORE_EXPORT LayoutInline : public LayoutBoxModelObject {
 
   PaintLayerType LayerTypeRequired() const override;
 
-  LayoutUnit OffsetLeft(const Element*) const final;
-  LayoutUnit OffsetTop(const Element*) const final;
-  LayoutUnit OffsetWidth() const final;
-  LayoutUnit OffsetHeight() const final;
+  PhysicalOffset OffsetPoint(const Element*) const final;
+
+  PhysicalRect BoundingBoxRelativeToFirstFragment() const final;
 
   bool MapToVisualRectInAncestorSpaceInternal(
       const LayoutBoxModelObject* ancestor,
       TransformState&,
-      VisualRectFlags = kDefaultVisualRectFlags) const final;
+      VisualRectFlags) const final;
 
   PositionWithAffinity PositionForPoint(const PhysicalOffset&) const override;
 
   void DirtyLinesFromChangedChild(LayoutObject*) final;
-
-  // TODO(leviw): This should probably be an int. We don't snap equivalent lines
-  // to different heights.
-  LayoutUnit FirstLineHeight() const final;
-
-  void ChildBecameNonInline(LayoutObject* child) final;
 
   void UpdateHitTestResult(HitTestResult&, const PhysicalOffset&) const final;
 
@@ -325,7 +321,13 @@ class CORE_EXPORT LayoutInline : public LayoutBoxModelObject {
 
   void AddDraggableRegions(Vector<DraggableRegionValue>&) final;
 
-  void UpdateFromStyle() final;
+  bool ShouldBeHandledAsInline(const ComputedStyle&) const override {
+    NOT_DESTROYED();
+    // This is needed (at a minimum) for LayoutSVGInline, which (including
+    // subclasses) is constructed for svg:a, svg:textPath, and svg:tspan,
+    // regardless of CSS 'display'.
+    return true;
+  }
   bool AnonymousHasStylePropagationOverride() final {
     NOT_DESTROYED();
     return true;
@@ -343,6 +345,7 @@ class CORE_EXPORT LayoutInline : public LayoutBoxModelObject {
 };
 
 inline wtf_size_t LayoutInline::FirstInlineFragmentItemIndex() const {
+  NOT_DESTROYED();
   if (!IsInLayoutNGInlineFormattingContext())
     return 0u;
   return first_fragment_item_index_;

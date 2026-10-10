@@ -27,7 +27,7 @@ mojom::UpdateSystemColorInfoParamsPtr MakeUpdateSystemColorInfoParams(
     ui::NativeTheme* native_theme) {
   mojom::UpdateSystemColorInfoParamsPtr params =
       mojom::UpdateSystemColorInfoParams::New();
-#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
   params->accent_color = native_theme->user_color();
 #endif
 
@@ -35,7 +35,8 @@ mojom::UpdateSystemColorInfoParamsPtr MakeUpdateSystemColorInfoParams(
 }
 
 void ThemeHelper::OnNativeThemeUpdated(ui::NativeTheme* observed_theme) {
-  DCHECK(theme_observation_.IsObservingSource(observed_theme));
+  CHECK(theme_observation_.IsObservingSource(observed_theme),
+        base::NotFatalUntil::M159);
 
   mojom::UpdateSystemColorInfoParamsPtr params =
       MakeUpdateSystemColorInfoParams(observed_theme);

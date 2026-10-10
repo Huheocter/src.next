@@ -9,13 +9,18 @@
 #include "base/files/file_path.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
+#include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "chrome/browser/metrics/chrome_feature_list_creator.h"
 #include "chrome/browser/prefs/profile_pref_store_manager.h"
 #include "chrome/common/channel_info.h"
+#include "components/metrics/cpu_metrics_provider.h"
 #include "components/metrics/delegating_provider.h"
+#include "components/metrics/early_metrics_guard.h"
+#include "components/metrics/early_safe_metrics_provider.h"
 #include "components/metrics/entropy_state_provider.h"
 #include "components/metrics/field_trials_provider.h"
+#include "components/metrics/install_date_provider.h"
 #include "components/metrics/metrics_log.h"
 #include "components/metrics/persistent_system_profile.h"
 #include "components/metrics/version_utils.h"
@@ -51,6 +56,11 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "services/preferences/public/mojom/tracked_preference_validation_delegate.mojom.h"
 
+#if BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
+#include "chrome/browser/extensions/chrome_extensions_browser_client.h"
+#include "extensions/browser/extensions_browser_client.h"
+#endif
+
 namespace {
 
 base::FilePath GetProfilePath() {
@@ -63,11 +73,15 @@ base::FilePath GetProfilePath() {
 
 #endif
 
-StartupData::StartupData()
-    : chrome_feature_list_creator_(
-          std::make_unique<ChromeFeatureListCreator>()) {}
+StartupData::StartupData() = default;
 
 StartupData::~StartupData() = default;
+
+// TODO(martinkong): Remove this function and replace its usage with
+// ChromeFeatureListCreator::GetInstance()
+ChromeFeatureListCreator* StartupData::chrome_feature_list_creator() {
+  return ChromeFeatureListCreator::GetInstance();
+}
 
 void StartupData::RecordCoreSystemProfile() {
   metrics::SystemProfileProto system_profile;
@@ -75,26 +89,63 @@ void StartupData::RecordCoreSystemProfile() {
       metrics::GetVersionString(),
       metrics::AsProtobufChannel(chrome::GetChannel()),
       chrome::IsExtendedStableChannel(),
-      chrome_feature_list_creator_->actual_locale(),
+      chrome_feature_list_creator()->actual_locale(),
       metrics::GetAppPackageName(), &system_profile);
 
-  metrics::DelegatingProvider delegating_provider;
+  {
+    // ========================================================================
+    // EARLY STARTUP METRICS PROVIDERS
+    // ========================================================================
+    // Providers registered here run extremely early during browser startup
+    // to populate a fallback system profile. They are running on the main
+    // thread before most browser services (like the UI thread,
+    // g_browser_process, or the full MetricsService) are fully initialized.
+    //
+    // RESTRICTIONS - To remain "Early Safe", providers MUST NOT:
+    // 1. Perform blocking disk I/O (this is strictly enforced below via
+    //    base::ScopedDisallowBlocking, which will crash in debug builds).
+    // 2. Query late-initialized globals or UI-thread bound services.
+    // 3. Emit 1-per-log lifecycle or status UMA histograms (as they will be
+    //    double-counted when the provider runs again during normal startup).
+    // 4. Spin up background threads or perform heavy, blocking computations.
+    //
+    // If your provider needs to skip certain operations during this early
+    // phase, you can check
+    // `metrics::EarlyMetricsGuard::IsEarlyMetricsRecordingActive()` in your
+    // ProvideSystemProfileMetrics() implementation to safely early-return.
+    metrics::EarlyMetricsGuard guard;
+    base::ScopedDisallowBlocking disallow_blocking;
 
-  // TODO(hanxi): Create SyntheticTrialRegistry and pass it to
-  // |field_trial_provider|.
-  delegating_provider.RegisterMetricsProvider(
-      std::make_unique<variations::FieldTrialsProvider>(nullptr,
-                                                        std::string_view()));
+    metrics::DelegatingProvider delegating_provider;
 
-  // Persists low entropy source values.
-  delegating_provider.RegisterMetricsProvider(
-      std::make_unique<metrics::EntropyStateProvider>(
-          chrome_feature_list_creator_->local_state()));
+    // Helper to enforce at compile-time that only early-safe providers
+    // are registered during early startup.
+    auto register_early_provider =
+        [&delegating_provider](
+            std::unique_ptr<metrics::EarlySafeMetricsProvider> provider) {
+          delegating_provider.RegisterMetricsProvider(std::move(provider));
+        };
 
-  delegating_provider.ProvideSystemProfileMetricsWithLogCreationTime(
-      base::TimeTicks(), &system_profile);
+    // TODO(hanxi): Create SyntheticTrialRegistry and pass it to
+    // |field_trial_provider|.
+    register_early_provider(std::make_unique<variations::FieldTrialsProvider>(
+        nullptr, std::string_view()));
 
-  // TODO(crbug.com/374999988): Records information from other providers.
+    // Persists low entropy source values.
+    register_early_provider(std::make_unique<metrics::EntropyStateProvider>(
+        chrome_feature_list_creator()->local_state()));
+
+    // Register CPUMetricsProvider for hardware details.
+    register_early_provider(std::make_unique<metrics::CPUMetricsProvider>());
+
+    // Register InstallDateProvider.
+    register_early_provider(std::make_unique<metrics::InstallDateProvider>(
+        chrome_feature_list_creator()->local_state()));
+
+    delegating_provider.ProvideSystemProfileMetricsWithLogCreationTime(
+        base::TimeTicks(), &system_profile);
+  }
+
   metrics::GlobalPersistentSystemProfile::GetInstance()->SetSystemProfile(
       system_profile, /* complete */ false);
 }
@@ -157,12 +208,25 @@ StartupData::TakeProtoDatabaseProvider() {
 
 void StartupData::PreProfilePrefServiceInit() {
   pref_registry_ = base::MakeRefCounted<user_prefs::PrefRegistrySyncable>();
+
+#if BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
+  // On desktop Android the ExtensionsBrowserClient is created here because it
+  // must be initialized before BrowserContextKeyedServiceFactories are built.
+  // Some factories use ExtensionsBrowserClient::Get() in their DependsOn().
+  extensions_browser_client_ =
+      std::make_unique<extensions::ChromeExtensionsBrowserClient>();
+  // We don't set ExtensionsBrowserClient to nullptr in this class because
+  // ownership will be transferred later to BrowserProcessImpl. Initialization
+  // will finish in BrowserProcessImpl as well.
+  extensions::ExtensionsBrowserClient::Set(extensions_browser_client_.get());
+#endif
+
   ChromeBrowserMainExtraPartsProfiles::
       EnsureBrowserContextKeyedServiceFactoriesBuilt();
 
   const base::FilePath& path = key_->GetPath();
   if (!base::PathExists(path)) {
-    // TODO(rogerta): http://crbug/160553 - Bad things happen if we can't
+    // TODO(rogerta): http://crbug.com/40293891 - Bad things happen if we can't
     // write to the profile directory.  We should eventually be able to run in
     // this situation.
     if (!base::CreateDirectory(path)) {
@@ -193,6 +257,7 @@ void StartupData::CreateServicesInternal() {
       std::make_unique<policy::SchemaRegistry>();
   schema_registry_service_ = BuildSchemaRegistryService(
       std::move(schema_registry), browser_policy_connector->GetChromeSchema(),
+      browser_policy_connector->GetExtensionInstallPolicySchema(),
       browser_policy_connector->GetSchemaRegistry());
 
   user_cloud_policy_manager_ = policy::UserCloudPolicyManager::Create(
@@ -209,7 +274,7 @@ void StartupData::CreateServicesInternal() {
       true /* force_immediate_policy_load*/, nullptr /* user */);
 
   RegisterProfilePrefs(false /* is_signin_profile */,
-                       chrome_feature_list_creator_->actual_locale(),
+                       chrome_feature_list_creator()->actual_locale(),
                        pref_registry_.get());
 
   mojo::PendingRemote<prefs::mojom::TrackedPreferenceValidationDelegate>
@@ -221,6 +286,14 @@ void StartupData::CreateServicesInternal() {
       pref_registry_, nullptr /* extension_pref_store */,
       profile_policy_connector_->policy_service(), browser_policy_connector,
       std::move(pref_validation_delegate), io_task_runner, key_.get(), path,
-      false /* async_prefs*/);
+      false /* async_prefs*/, g_browser_process->os_crypt_async(),
+      g_browser_process->device_parental_controls());
+}
+#endif
+
+#if BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
+std::unique_ptr<extensions::ExtensionsBrowserClient>
+StartupData::TakeExtensionsBrowserClient() {
+  return std::move(extensions_browser_client_);
 }
 #endif

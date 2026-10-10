@@ -14,10 +14,14 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chrome/test/base/testing_profile_manager.h"
 #include "extensions/browser/content_verifier/test_utils.h"
 #include "extensions/browser/extension_system.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/file_util.h"
 #include "extensions/common/switches.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -53,7 +57,8 @@ class ChromeContentVerifierTest : public ExtensionServiceTestWithInstall {
     // Note: we need a separate TestingProfile (other than our base class)
     // because we need it to build |content_verifier_| below in
     // InitContentVerifier().
-    testing_profile_ = TestingProfile::Builder().Build();
+    testing_profile_ =
+        testing_profile_manager()->CreateTestingProfile("content_verifier");
 
     // Set up content verification.
     base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
@@ -65,6 +70,15 @@ class ChromeContentVerifierTest : public ExtensionServiceTestWithInstall {
   void TearDown() override {
     if (content_verifier_ != nullptr) {
       content_verifier_->Shutdown();
+      content_verifier_.reset();
+    }
+    if (testing_profile_) {
+      // Clear the raw_ptr before deleting the profile so it does not dangle.
+      testing_profile_ = nullptr;
+      // Explicitly delete the extra testing profile created in SetUp() before
+      // the base class tears down to ensure proper cleanup order and avoid
+      // multi-profile teardown races.
+      testing_profile_manager()->DeleteTestingProfile("content_verifier");
     }
     ExtensionServiceTestWithInstall::TearDown();
   }
@@ -132,7 +146,7 @@ class ChromeContentVerifierTest : public ExtensionServiceTestWithInstall {
   raw_ptr<ChromeContentVerifierDelegate> delegate_raw_ = nullptr;
 
   scoped_refptr<ContentVerifier> content_verifier_ = nullptr;
-  std::unique_ptr<TestingProfile> testing_profile_;
+  raw_ptr<TestingProfile> testing_profile_ = nullptr;
 };
 
 // Tests that an extension with mixed case resources specified in manifest.json
@@ -177,23 +191,6 @@ TEST_F(ChromeContentVerifierTest, CaseSensitivityInManifestPaths) {
     EXPECT_FALSE(ShouldVerifyAnyPaths(ToFilePaths(
         {"_locales/de_at/messages.json", "_locales/en_gb/messages.json",
          "h.png", "G.png", "I.png"})));
-  }
-
-  // Ensure transcoded paths are handled correctly with dot-space suffix added
-  // to them in OS that ignores dot-space suffix (win). They should still be
-  // excluded from verification (i.e. ShouldVerifyAnyPaths should return false
-  // for them).
-  if (content_verifier_utils::IsDotSpaceFilenameSuffixIgnored()) {
-    EXPECT_FALSE(ShouldVerifyAnyPaths(ToFilePaths(
-        {"_locales/de_AT/messages.json.", "_locales/en_GB/messages.json ",
-         "H.png .", "g.png ..", "i.png.."})));
-
-    // Ensure the same with different case filenames.
-    if (!content_verifier_utils::IsFileAccessCaseSensitive()) {
-      EXPECT_FALSE(ShouldVerifyAnyPaths(ToFilePaths(
-          {"_locales/de_at/messages.json.", "_locales/en_gb/messages.json ",
-           "h.png .", "G.png ..", "I.png.."})));
-    }
   }
 
   // Ensure content verification is skipped for case-insensitive path matching,

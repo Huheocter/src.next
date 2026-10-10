@@ -23,10 +23,8 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_STYLE_SHEET_H_
 
 #include "base/gtest_prod_util.h"
-#include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_rule.h"
-#include "third_party/blink/renderer/core/css/media_query_evaluator.h"
 #include "third_party/blink/renderer/core/css/media_query_set_owner.h"
 #include "third_party/blink/renderer/core/css/resolver/media_query_result.h"
 #include "third_party/blink/renderer/core/css/style_sheet.h"
@@ -50,7 +48,12 @@ class CSSStyleSheetInit;
 class Document;
 class Element;
 class ExceptionState;
+class InspectorGhostRules;
+class MediaQueryEvaluator;
 class MediaQuerySet;
+class QuietMutationScope;
+template <typename T>
+class ScriptPromise;
 class ScriptState;
 class StyleSheetContents;
 class TreeScope;
@@ -78,11 +81,15 @@ class CORE_EXPORT CSSStyleSheet final : public StyleSheet,
       Node&,
       const KURL&,
       const TextPosition& start_position = TextPosition::MinimumPosition(),
-      const WTF::TextEncoding& = WTF::TextEncoding());
+      const TextEncoding& = TextEncoding());
   static CSSStyleSheet* CreateInline(
       StyleSheetContents*,
       Node& owner_node,
       const TextPosition& start_position = TextPosition::MinimumPosition());
+  static CSSParserContext* InlineParserContext(
+      Document&,
+      const KURL& base_url,
+      const TextEncoding& encoding = TextEncoding());
 
   explicit CSSStyleSheet(StyleSheetContents*,
                          CSSImportRule* owner_rule = nullptr);
@@ -186,7 +193,7 @@ class CORE_EXPORT CSSStyleSheet final : public StyleSheet,
   // True when this stylesheet is among the TreeScope's adopted style sheets.
   //
   // https://drafts.csswg.org/cssom/#dom-documentorshadowroot-adoptedstylesheets
-  bool IsAdoptedByTreeScope(TreeScope& tree_scope);
+  bool IsAdoptedByTreeScope(const TreeScope& tree_scope);
 
   // Associated document for constructed stylesheet. Always non-null for
   // constructed stylesheets, always null otherwise.
@@ -195,10 +202,6 @@ class CORE_EXPORT CSSStyleSheet final : public StyleSheet,
   // Set constructor document for constructed stylesheet.
   void SetConstructorDocument(Document& document) {
     constructor_document_ = &document;
-  }
-
-  void AddToCustomElementTagNames(const AtomicString& local_tag_name) {
-    custom_element_tag_names_.insert(local_tag_name);
   }
 
   class RuleMutationScope {
@@ -222,6 +225,8 @@ class CORE_EXPORT CSSStyleSheet final : public StyleSheet,
     kSheet,
     // Rules in the CSSStyleSheet changed.
     kRules,
+    // StyleSheetContents changed.
+    kContents,
   };
   void DidMutate(Mutation mutation);
 
@@ -259,15 +264,28 @@ class CORE_EXPORT CSSStyleSheet final : public StyleSheet,
   void Trace(Visitor*) const override;
 
  private:
+  friend class QuietMutationScope;
+  friend class InspectorGhostRules;
+
   bool IsAlternate() const;
   bool IsCSSStyleSheet() const override { return true; }
   String type() const override { return "text/css"; }
 
+  // True if the StyleSheetContents is shared with another CSSStyleSheet.
+  // See StyleSheetContents::IsCacheableForStyleElement()/
+  // IsCacheableForStyleElement() and their call sites.
+  bool IsContentsShared() const;
+  void SetContents(StyleSheetContents*);
   void ReattachChildRuleCSSOMWrappers();
+  void DetachCSSOMWrappers();
 
   bool CanAccessRules() const;
 
   void SetLoadCompleted(bool);
+
+  // See QuietMutationScope.
+  void BeginQuietMutation();
+  void EndQuietMutation(StyleSheetContents* original_contents);
 
   FRIEND_TEST_ALL_PREFIXES(
       CSSStyleSheetTest,
@@ -306,7 +324,6 @@ class CORE_EXPORT CSSStyleSheet final : public StyleSheet,
   // The Document this stylesheet was constructed for. Always non-null for
   // constructed stylesheets. Always null for other sheets.
   Member<Document> constructor_document_;
-  HashSet<AtomicString> custom_element_tag_names_;
 
   TextPosition start_position_;
   Member<MediaList> media_cssom_wrapper_;

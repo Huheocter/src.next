@@ -174,7 +174,8 @@ class NET_EXPORT_PRIVATE BrokenAlternativeServices {
 
   struct AlternativeServiceHash {
     size_t operator()(const AlternativeService& entry) const {
-      return entry.protocol ^ std::hash<std::string>()(entry.host) ^ entry.port;
+      return static_cast<size_t>(entry.protocol) ^
+             std::hash<std::string>()(entry.host) ^ entry.port;
     }
   };
 
@@ -224,6 +225,9 @@ class NET_EXPORT_PRIVATE BrokenAlternativeServices {
 
   // Delay for the 1st time alternative service is marked broken.
   base::TimeDelta initial_delay_;
+
+  // Maximum delay for a broken alternative service.
+  base::TimeDelta max_delay_;
 
   // If true, the delay for broken alternative service =
   // initial_delay_for_broken_alternative_service * (1 << broken_count).

@@ -5,8 +5,10 @@
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 
 #include "testing/gmock/include/gmock/gmock.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_dom_matrix_init.h"
 #include "third_party/blink/renderer/core/dom/pseudo_element.h"
 #include "third_party/blink/renderer/core/events/mouse_event.h"
+#include "third_party/blink/renderer/core/geometry/dom_rect.h"
 #include "third_party/blink/renderer/core/html/html_iframe_element.h"
 #include "third_party/blink/renderer/core/layout/hit_test_location.h"
 #include "third_party/blink/renderer/core/layout/layout_box_model_object.h"
@@ -16,7 +18,10 @@
 #include "third_party/blink/renderer/core/paint/paint_layer_paint_order_iterator.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
+#include "third_party/blink/renderer/platform/wtf/text/format.h"
 
 namespace blink {
 
@@ -63,70 +68,9 @@ TEST_P(PaintLayerTest, RootLayerScrollBounds) {
             plsa->MaximumScrollOffset());
 
   EXPECT_EQ(gfx::Rect(0, 0, 800 - scrollbarThickness, 600 - scrollbarThickness),
-            plsa->VisibleContentRect());
+            plsa->VisibleContentRect(kExcludeScrollbars));
   EXPECT_EQ(gfx::Rect(0, 0, 800, 600),
             plsa->VisibleContentRect(kIncludeScrollbars));
-}
-
-TEST_P(PaintLayerTest, CompositedScrollingNoNeedsRepaint) {
-  SetBodyInnerHTML(R"HTML(
-    <div id='scroll' style='width: 100px; height: 100px; overflow: scroll;
-        will-change: transform'>
-      <div id='content' style='position: relative; background: blue;
-          width: 2000px; height: 2000px'></div>
-    </div>
-  )HTML");
-
-  PaintLayer* scroll_layer = GetPaintLayerByElementId("scroll");
-
-  PaintLayer* content_layer = GetPaintLayerByElementId("content");
-
-  scroll_layer->GetScrollableArea()->SetScrollOffset(
-      ScrollOffset(1000, 1000), mojom::blink::ScrollType::kProgrammatic);
-  UpdateAllLifecyclePhasesExceptPaint();
-  EXPECT_EQ(
-      gfx::Vector2d(1000, 1000),
-      content_layer->ContainingLayer()->PixelSnappedScrolledContentOffset());
-  EXPECT_FALSE(content_layer->SelfNeedsRepaint());
-  EXPECT_FALSE(scroll_layer->SelfNeedsRepaint());
-  UpdateAllLifecyclePhasesForTest();
-}
-
-TEST_P(PaintLayerTest, NonCompositedScrollingNeedsRepaint) {
-  SetBodyInnerHTML(R"HTML(
-    <style>
-     /* to prevent the mock overlay scrollbar from affecting compositing. */
-     ::-webkit-scrollbar { display: none; }
-    </style>
-    <div id='scroll' style='width: 100px; height: 100px; overflow: scroll'>
-      <div id='content' style='position: relative; background: blue;
-          width: 2000px; height: 2000px'></div>
-    </div>
-  )HTML");
-
-  PaintLayer* scroll_layer = GetPaintLayerByElementId("scroll");
-  EXPECT_FALSE(scroll_layer->GetLayoutObject()
-                   .FirstFragment()
-                   .PaintProperties()
-                   ->ScrollTranslation()
-                   ->HasDirectCompositingReasons());
-
-  PaintLayer* content_layer = GetPaintLayerByElementId("content");
-  const auto& fragment = content_layer->GetLayoutObject().FirstFragment();
-  EXPECT_EQ(gfx::Rect(0, 0, 2000, 2000), fragment.GetContentsCullRect().Rect());
-
-  scroll_layer->GetScrollableArea()->SetScrollOffset(
-      ScrollOffset(1000, 1000), mojom::blink::ScrollType::kProgrammatic);
-  UpdateAllLifecyclePhasesExceptPaint();
-  EXPECT_EQ(
-      gfx::Vector2d(1000, 1000),
-      content_layer->ContainingLayer()->PixelSnappedScrolledContentOffset());
-
-  EXPECT_FALSE(scroll_layer->SelfNeedsRepaint());
-  EXPECT_EQ(gfx::Rect(0, 0, 2000, 2000), fragment.GetContentsCullRect().Rect());
-  EXPECT_FALSE(content_layer->SelfNeedsRepaint());
-
-  UpdateAllLifecyclePhasesForTest();
 }
 
 TEST_P(PaintLayerTest, HasNonIsolatedDescendantWithBlendMode) {
@@ -159,18 +103,15 @@ TEST_P(PaintLayerTest, HasFixedPositionDescendant) {
     </div>
   )HTML");
   PaintLayer* parent = GetPaintLayerByElementId("parent");
-  PaintLayer* child = GetPaintLayerByElementId("child");
   EXPECT_TRUE(parent->HasFixedPositionDescendant());
-  EXPECT_FALSE(child->HasFixedPositionDescendant());
+  EXPECT_FALSE(GetPaintLayerByElementId("child")->HasFixedPositionDescendant());
 
-  GetDocument()
-      .getElementById(AtomicString("child"))
-      ->setAttribute(html_names::kStyleAttr,
-                     AtomicString("position: relative"));
+  GetElementById("child")->setAttribute(html_names::kStyleAttr,
+                                        AtomicString("position: relative"));
   UpdateAllLifecyclePhasesForTest();
 
   EXPECT_FALSE(parent->HasFixedPositionDescendant());
-  EXPECT_FALSE(child->HasFixedPositionDescendant());
+  EXPECT_FALSE(GetPaintLayerByElementId("child")->HasFixedPositionDescendant());
 }
 
 TEST_P(PaintLayerTest, HasNonContainedAbsolutePositionDescendant) {
@@ -180,27 +121,26 @@ TEST_P(PaintLayerTest, HasNonContainedAbsolutePositionDescendant) {
       </div>
     </div>
   )HTML");
-  PaintLayer* parent = GetPaintLayerByElementId("parent");
-  PaintLayer* child = GetPaintLayerByElementId("child");
-  EXPECT_FALSE(parent->HasNonContainedAbsolutePositionDescendant());
-  EXPECT_FALSE(child->HasNonContainedAbsolutePositionDescendant());
+  EXPECT_FALSE(GetPaintLayerByElementId("parent")
+                   ->HasNonContainedAbsolutePositionDescendant());
+  EXPECT_FALSE(GetPaintLayerByElementId("child")
+                   ->HasNonContainedAbsolutePositionDescendant());
 
-  GetDocument()
-      .getElementById(AtomicString("child"))
-      ->setAttribute(html_names::kStyleAttr,
-                     AtomicString("position: absolute"));
+  GetElementById("child")->setAttribute(html_names::kStyleAttr,
+                                        AtomicString("position: absolute"));
   UpdateAllLifecyclePhasesForTest();
+  EXPECT_TRUE(GetPaintLayerByElementId("parent")
+                  ->HasNonContainedAbsolutePositionDescendant());
+  EXPECT_FALSE(GetPaintLayerByElementId("child")
+                   ->HasNonContainedAbsolutePositionDescendant());
 
-  EXPECT_TRUE(parent->HasNonContainedAbsolutePositionDescendant());
-  EXPECT_FALSE(child->HasNonContainedAbsolutePositionDescendant());
-
-  GetDocument()
-      .getElementById(AtomicString("parent"))
-      ->setAttribute(html_names::kStyleAttr,
-                     AtomicString("position: relative"));
+  GetElementById("parent")->setAttribute(html_names::kStyleAttr,
+                                         AtomicString("position: relative"));
   UpdateAllLifecyclePhasesForTest();
-  EXPECT_FALSE(parent->HasNonContainedAbsolutePositionDescendant());
-  EXPECT_FALSE(child->HasNonContainedAbsolutePositionDescendant());
+  EXPECT_FALSE(GetPaintLayerByElementId("parent")
+                   ->HasNonContainedAbsolutePositionDescendant());
+  EXPECT_FALSE(GetPaintLayerByElementId("child")
+                   ->HasNonContainedAbsolutePositionDescendant());
 }
 
 TEST_P(PaintLayerTest, HasSelfPaintingDescendant) {
@@ -216,6 +156,54 @@ TEST_P(PaintLayerTest, HasSelfPaintingDescendant) {
 
   EXPECT_TRUE(parent->HasSelfPaintingLayerDescendant());
   EXPECT_FALSE(child->HasSelfPaintingLayerDescendant());
+}
+
+TEST_P(PaintLayerTest, HasBackdropFilterDescendantChild) {
+  SetBodyInnerHTML(R"HTML(
+    <div id='parent' style='position: relative'>
+      <div id='child' style='backdrop-filter: blur(1px)'>
+        <div></div>
+      </div>
+    </div>
+  )HTML");
+  PaintLayer* parent = GetPaintLayerByElementId("parent");
+  PaintLayer* child = GetPaintLayerByElementId("child");
+
+  EXPECT_TRUE(parent->HasBackdropFilterDescendant());
+  EXPECT_FALSE(child->HasBackdropFilterDescendant());
+}
+
+TEST_P(PaintLayerTest, HasBackdropFilterGrandchild) {
+  SetBodyInnerHTML(R"HTML(
+    <div id='parent' style='position: relative'>
+      <div id='child' style='position: relative'>
+        <div id='grandchild'
+          style='backdrop-filter: blur(1px)'></div>
+      </div>
+    </div>
+  )HTML");
+  PaintLayer* parent = GetPaintLayerByElementId("parent");
+  PaintLayer* child = GetPaintLayerByElementId("child");
+  PaintLayer* grandchild = GetPaintLayerByElementId("grandchild");
+
+  EXPECT_TRUE(parent->HasBackdropFilterDescendant());
+  EXPECT_TRUE(child->HasBackdropFilterDescendant());
+  EXPECT_FALSE(grandchild->HasBackdropFilterDescendant());
+}
+
+TEST_P(PaintLayerTest, HasBackdropFilterNone) {
+  SetBodyInnerHTML(R"HTML(
+    <div id='parent' style='position: relative'>
+      <div id='child' style='position: relative'>
+        <div></div>
+      </div>
+    </div>
+  )HTML");
+  PaintLayer* parent = GetPaintLayerByElementId("parent");
+  PaintLayer* child = GetPaintLayerByElementId("child");
+
+  EXPECT_FALSE(parent->HasBackdropFilterDescendant());
+  EXPECT_FALSE(child->HasBackdropFilterDescendant());
 }
 
 TEST_P(PaintLayerTest, HasSelfPaintingDescendantNotSelfPainting) {
@@ -248,7 +236,7 @@ TEST_P(PaintLayerTest, HasSelfPaintingParentNotSelfPainting) {
   EXPECT_FALSE(child->HasSelfPaintingLayerDescendant());
 }
 
-static const HeapVector<Member<PaintLayer>>*
+static const GCedHeapVector<Member<PaintLayer>>*
 LayersPaintingOverlayOverflowControlsAfter(const PaintLayer* layer) {
   return PaintLayerPaintOrderIterator(layer->AncestorStackingContext(),
                                       kPositiveZOrderChildren)
@@ -966,6 +954,36 @@ TEST_P(ReorderOverlayOverflowControlsTest, AddRemoveScrollableArea) {
   EXPECT_EQ(child->GetLayoutObject().GetNode(), HitTest(99, 99));
 }
 
+// If a visibility: hidden child has been omitted from z-index lists due to
+// visibility: hidden, the child should also be ignored for reordering overlay
+// overflow controls.
+TEST_P(ReorderOverlayOverflowControlsTest, VisibilityHiddenChild) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      body { margin: 0; }
+      #parent {
+        position: relative;
+        width: 100px;
+        height: 100px;
+      }
+      #child {
+        position: relative;
+        visibility: hidden;
+        height: 300px;
+      }
+    </style>
+    <div id='parent'>
+      <div id='child'></div>
+      content
+    </div>
+  )HTML");
+
+  InitOverflowStyle("parent");
+  auto* parent = GetPaintLayerByElementId("parent");
+  EXPECT_TRUE(parent->GetScrollableArea());
+  EXPECT_FALSE(parent->NeedsReorderOverlayOverflowControls());
+}
+
 TEST_P(ReorderOverlayOverflowControlsTest, AddRemoveStackedChild) {
   SetBodyInnerHTML(R"HTML(
     <style>
@@ -1049,6 +1067,32 @@ TEST_P(PaintLayerTest, SubsequenceCachingSVG) {
   PaintLayer* foreign_object = GetPaintLayerByElementId("foreignObject");
   EXPECT_TRUE(svgroot->SupportsSubsequenceCaching());
   EXPECT_TRUE(foreign_object->SupportsSubsequenceCaching());
+}
+
+TEST_P(PaintLayerTest, ReplacedNormalFlowStackingVideoControlsIsNotStacked) {
+  SetBodyInnerHTML(R"HTML(
+    <video id="videoWithoutControls"></video>
+    <video id="video" controls></video>
+  )HTML");
+  auto* video_without_controls =
+      GetLayoutObjectByElementId("videoWithoutControls");
+  EXPECT_FALSE(video_without_controls->IsStackingContext());
+  EXPECT_FALSE(video_without_controls->IsStacked());
+
+  PaintLayer* video_layer = GetPaintLayerByElementId("video");
+  EXPECT_TRUE(video_layer->GetLayoutObject().IsStackingContext());
+  EXPECT_FALSE(video_layer->GetLayoutObject().IsStacked());
+  EXPECT_TRUE(video_layer->IsReplacedNormalFlowStackingContext());
+
+  GetDocument()
+      .getElementById(AtomicString("video"))
+      ->setAttribute(html_names::kStyleAttr,
+                     AtomicString("position: relative"));
+  UpdateAllLifecyclePhasesForTest();
+
+  video_layer = GetPaintLayerByElementId("video");
+  EXPECT_FALSE(video_layer->IsReplacedNormalFlowStackingContext());
+  EXPECT_TRUE(video_layer->GetLayoutObject().IsStacked());
 }
 
 TEST_P(PaintLayerTest, SubsequenceCachingMuticol) {
@@ -1232,7 +1276,7 @@ TEST_P(PaintLayerTest, DescendantDependentFlagsStopsAtThrottledFrames) {
                    ->needs_descendant_dependent_flags_update_);
 }
 
-TEST_P(PaintLayerTest, CompositingContainerStackedFloatUnderStackingInline) {
+TEST_P(PaintLayerTest, PaintingContainerStackedFloatUnderStackingInline) {
   SetBodyInnerHTML(R"HTML(
     <div id='compositedContainer' style='position: relative;
         will-change: transform'>
@@ -1245,10 +1289,10 @@ TEST_P(PaintLayerTest, CompositingContainerStackedFloatUnderStackingInline) {
   )HTML");
 
   PaintLayer* target = GetPaintLayerByElementId("target");
-  EXPECT_EQ(GetPaintLayerByElementId("span"), target->CompositingContainer());
+  EXPECT_EQ(GetPaintLayerByElementId("span"), target->PaintingContainer());
 }
 
-TEST_P(PaintLayerTest, CompositingContainerColumnSpanAll) {
+TEST_P(PaintLayerTest, PaintingContainerColumnSpanAll) {
   SetBodyInnerHTML(R"HTML(
     <div>
       <div id='multicol' style='columns: 1; position: relative'>
@@ -1261,13 +1305,13 @@ TEST_P(PaintLayerTest, CompositingContainerColumnSpanAll) {
 
   PaintLayer* columnSpan = GetPaintLayerByElementId("columnSpan");
   EXPECT_EQ(GetPaintLayerByElementId("paintContainer"),
-            columnSpan->CompositingContainer());
+            columnSpan->PaintingContainer());
   EXPECT_EQ(GetPaintLayerByElementId("multicol"),
             columnSpan->ContainingLayer());
 }
 
 TEST_P(PaintLayerTest,
-       CompositingContainerStackedFloatUnderStackingCompositedInline) {
+       PaintingContainerStackedFloatUnderStackingCompositedInline) {
   SetBodyInnerHTML(R"HTML(
     <div id='compositedContainer' style='position: relative;
         will-change: transform'>
@@ -1281,10 +1325,10 @@ TEST_P(PaintLayerTest,
 
   PaintLayer* target = GetPaintLayerByElementId("target");
   PaintLayer* span = GetPaintLayerByElementId("span");
-  EXPECT_EQ(span, target->CompositingContainer());
+  EXPECT_EQ(span, target->PaintingContainer());
 }
 
-TEST_P(PaintLayerTest, CompositingContainerNonStackedFloatUnderStackingInline) {
+TEST_P(PaintLayerTest, PaintingContainerNonStackedFloatUnderStackingInline) {
   SetBodyInnerHTML(R"HTML(
     <div id='compositedContainer' style='position: relative;
         will-change: transform'>
@@ -1297,11 +1341,11 @@ TEST_P(PaintLayerTest, CompositingContainerNonStackedFloatUnderStackingInline) {
   )HTML");
 
   PaintLayer* target = GetPaintLayerByElementId("target");
-  EXPECT_EQ(GetPaintLayerByElementId("span"), target->CompositingContainer());
+  EXPECT_EQ(GetPaintLayerByElementId("span"), target->PaintingContainer());
 }
 
 TEST_P(PaintLayerTest,
-       CompositingContainerNonStackedFloatUnderStackingCompositedInline) {
+       PaintingContainerNonStackedFloatUnderStackingCompositedInline) {
   SetBodyInnerHTML(R"HTML(
     <div id='compositedContainer' style='position: relative;
         will-change: transform'>
@@ -1314,11 +1358,10 @@ TEST_P(PaintLayerTest,
   )HTML");
 
   PaintLayer* target = GetPaintLayerByElementId("target");
-  EXPECT_EQ(GetPaintLayerByElementId("span"), target->CompositingContainer());
+  EXPECT_EQ(GetPaintLayerByElementId("span"), target->PaintingContainer());
 }
 
-TEST_P(PaintLayerTest,
-       CompositingContainerStackedUnderFloatUnderStackingInline) {
+TEST_P(PaintLayerTest, PaintingContainerStackedUnderFloatUnderStackingInline) {
   SetBodyInnerHTML(R"HTML(
     <div id='compositedContainer' style='position: relative;
         will-change: transform'>
@@ -1333,11 +1376,11 @@ TEST_P(PaintLayerTest,
   )HTML");
 
   PaintLayer* target = GetPaintLayerByElementId("target");
-  EXPECT_EQ(GetPaintLayerByElementId("span"), target->CompositingContainer());
+  EXPECT_EQ(GetPaintLayerByElementId("span"), target->PaintingContainer());
 }
 
 TEST_P(PaintLayerTest,
-       CompositingContainerStackedUnderFloatUnderStackingCompositedInline) {
+       PaintingContainerStackedUnderFloatUnderStackingCompositedInline) {
   SetBodyInnerHTML(R"HTML(
     <div id='compositedContainer' style='position: relative;
         will-change: transform'>
@@ -1353,11 +1396,11 @@ TEST_P(PaintLayerTest,
 
   PaintLayer* target = GetPaintLayerByElementId("target");
   PaintLayer* span = GetPaintLayerByElementId("span");
-  EXPECT_EQ(span, target->CompositingContainer());
+  EXPECT_EQ(span, target->PaintingContainer());
 }
 
 TEST_P(PaintLayerTest,
-       CompositingContainerNonStackedUnderFloatUnderStackingInline) {
+       PaintingContainerNonStackedUnderFloatUnderStackingInline) {
   SetBodyInnerHTML(R"HTML(
     <div id='compositedContainer' style='position: relative;
         will-change: transform'>
@@ -1372,11 +1415,11 @@ TEST_P(PaintLayerTest,
   )HTML");
 
   PaintLayer* target = GetPaintLayerByElementId("target");
-  EXPECT_EQ(GetPaintLayerByElementId("span"), target->CompositingContainer());
+  EXPECT_EQ(GetPaintLayerByElementId("span"), target->PaintingContainer());
 }
 
 TEST_P(PaintLayerTest,
-       CompositingContainerNonStackedUnderFloatUnderStackingCompositedInline) {
+       PaintingContainerNonStackedUnderFloatUnderStackingCompositedInline) {
   SetBodyInnerHTML(R"HTML(
     <div id='compositedContainer' style='position: relative;
         will-change: transform'>
@@ -1391,7 +1434,7 @@ TEST_P(PaintLayerTest,
   )HTML");
 
   PaintLayer* target = GetPaintLayerByElementId("target");
-  EXPECT_EQ(GetPaintLayerByElementId("span"), target->CompositingContainer());
+  EXPECT_EQ(GetPaintLayerByElementId("span"), target->PaintingContainer());
 }
 
 TEST_P(PaintLayerTest, FloatLayerAndAbsoluteUnderInlineLayer) {
@@ -1423,7 +1466,7 @@ TEST_P(PaintLayerTest, FloatLayerAndAbsoluteUnderInlineLayer) {
   EXPECT_EQ(container, span->ContainingLayer());
 }
 
-TEST_P(PaintLayerTest, FloatLayerUnderInlineLayerScrolled) {
+TEST_P(PaintLayerTest, FloatLayerUnderInlineLayer) {
   SetBodyInnerHTML(R"HTML(
     <div id='container' style='overflow: scroll; width: 50px; height: 50px'>
       <span id='span' style='position: relative; top: 100px; left: 100px'>
@@ -1438,15 +1481,11 @@ TEST_P(PaintLayerTest, FloatLayerUnderInlineLayerScrolled) {
   PaintLayer* floating = GetPaintLayerByElementId("floating");
   PaintLayer* span = GetPaintLayerByElementId("span");
   PaintLayer* container = GetPaintLayerByElementId("container");
-  container->GetScrollableArea()->SetScrollOffset(
-      ScrollOffset(0, 400), mojom::blink::ScrollType::kProgrammatic);
 
   EXPECT_EQ(span, floating->Parent());
   EXPECT_EQ(span, floating->ContainingLayer());
   EXPECT_EQ(container, span->Parent());
   EXPECT_EQ(container, span->ContainingLayer());
-  EXPECT_EQ(gfx::Vector2d(0, 400),
-            span->ContainingLayer()->PixelSnappedScrolledContentOffset());
 }
 
 TEST_P(PaintLayerTest, FloatLayerUnderBlockUnderInlineLayer) {
@@ -1530,7 +1569,7 @@ TEST_P(PaintLayerTest, LayerUnderFloatUnderInlineLayer) {
   EXPECT_EQ(span, child->ContainingLayer());
 }
 
-TEST_P(PaintLayerTest, CompositingContainerFloatingIframe) {
+TEST_P(PaintLayerTest, PaintingContainerFloatingIframe) {
   SetBodyInnerHTML(R"HTML(
     <div id='compositedContainer' style='position: relative;
         will-change: transform'>
@@ -1549,10 +1588,10 @@ TEST_P(PaintLayerTest, CompositingContainerFloatingIframe) {
   // A non-positioned iframe still gets a PaintLayer because PaintLayers are
   // forced for all LayoutEmbeddedContent objects. However, such PaintLayers are
   // not stacked.
-  EXPECT_EQ(GetPaintLayerByElementId("span"), target->CompositingContainer());
+  EXPECT_EQ(GetPaintLayerByElementId("span"), target->PaintingContainer());
 }
 
-TEST_P(PaintLayerTest, ColumnSpanLayerUnderExtraLayerScrolled) {
+TEST_P(PaintLayerTest, ColumnSpanLayerUnderExtraLayer) {
   SetBodyInnerHTML(R"HTML(
     <div id='columns' style='overflow: hidden; width: 80px; height: 80px;
         columns: 2; column-gap: 0'>
@@ -1569,15 +1608,11 @@ TEST_P(PaintLayerTest, ColumnSpanLayerUnderExtraLayerScrolled) {
   PaintLayer* spanner = GetPaintLayerByElementId("spanner");
   PaintLayer* extra_layer = GetPaintLayerByElementId("extraLayer");
   PaintLayer* columns = GetPaintLayerByElementId("columns");
-  columns->GetScrollableArea()->SetScrollOffset(
-      ScrollOffset(200, 0), mojom::blink::ScrollType::kProgrammatic);
 
   EXPECT_EQ(extra_layer, spanner->Parent());
   EXPECT_EQ(columns, spanner->ContainingLayer());
   EXPECT_EQ(columns, extra_layer->Parent());
   EXPECT_EQ(columns, extra_layer->ContainingLayer());
-  EXPECT_EQ(gfx::Vector2d(200, 0),
-            spanner->ContainingLayer()->PixelSnappedScrolledContentOffset());
 }
 
 TEST_P(PaintLayerTest, PaintLayerTransformUpdatedOnStyleTransformAnimation) {
@@ -1589,10 +1624,10 @@ TEST_P(PaintLayerTest, PaintLayerTransformUpdatedOnStyleTransformAnimation) {
       To<LayoutBoxModelObject>(target_object)->Layer();
   EXPECT_EQ(nullptr, target_paint_layer->Transform());
 
-  const ComputedStyle* old_style = target_object->Style();
-  ComputedStyleBuilder new_style_builder(*old_style);
+  const ComputedStyle& old_style = target_object->StyleRef();
+  ComputedStyleBuilder new_style_builder(old_style);
   new_style_builder.SetHasCurrentTransformAnimation(true);
-  target_object->SetStyle(new_style_builder.TakeStyle());
+  target_object->SetStyle(*new_style_builder.TakeStyle());
 
   EXPECT_NE(nullptr, target_paint_layer->Transform());
 }
@@ -1613,21 +1648,21 @@ TEST_P(PaintLayerTest, NeedsRepaintOnSelfPaintingStatusChange) {
 
   // Target layer is self painting because it is relatively positioned.
   EXPECT_TRUE(target_layer->IsSelfPaintingLayer());
-  EXPECT_EQ(span_layer, target_layer->CompositingContainer());
+  EXPECT_EQ(span_layer, target_layer->PaintingContainer());
   EXPECT_FALSE(target_layer->SelfNeedsRepaint());
   EXPECT_FALSE(span_layer->SelfNeedsRepaint());
 
   // Removing position:relative makes target layer no longer self-painting,
-  // and change its compositing container. The original compositing container
+  // and change its painting container. The original painting container
   // span_layer should be marked SelfNeedsRepaint.
   target_element->setAttribute(html_names::kStyleAttr,
                                AtomicString("overflow: hidden; float: left"));
 
   UpdateAllLifecyclePhasesExceptPaint();
   EXPECT_FALSE(target_layer->IsSelfPaintingLayer());
-  EXPECT_EQ(span_layer, target_layer->CompositingContainer());
+  EXPECT_EQ(span_layer, target_layer->PaintingContainer());
   EXPECT_TRUE(target_layer->SelfNeedsRepaint());
-  EXPECT_TRUE(target_layer->CompositingContainer()->SelfNeedsRepaint());
+  EXPECT_TRUE(target_layer->PaintingContainer()->SelfNeedsRepaint());
   EXPECT_TRUE(span_layer->SelfNeedsRepaint());
   UpdateAllLifecyclePhasesForTest();
 }
@@ -1639,23 +1674,22 @@ TEST_P(PaintLayerTest, NeedsRepaintOnRemovingStackedLayer) {
 
   auto* body = GetDocument().body();
   auto* body_layer = body->GetLayoutBox()->Layer();
-  auto* target_element = GetDocument().getElementById(AtomicString("target"));
-  auto* target_object = target_element->GetLayoutObject();
-  auto* target_layer = To<LayoutBoxModelObject>(target_object)->Layer();
+  auto* target_element = GetElementById("target");
 
-  // |container| is not the CompositingContainer of |target| because |target|
+  // |container| is not the PaintingContainer of |target| because |target|
   // is stacked but |container| is not a stacking context.
+  auto* target_layer = GetPaintLayerByElementId("target");
   EXPECT_TRUE(target_layer->GetLayoutObject().IsStacked());
-  EXPECT_NE(body_layer, target_layer->CompositingContainer());
-  auto* old_compositing_container = target_layer->CompositingContainer();
+  EXPECT_NE(body_layer, target_layer->PaintingContainer());
+  auto* old_painting_container = target_layer->PaintingContainer();
 
   body->setAttribute(html_names::kStyleAttr, AtomicString("margin-top: 0"));
   target_element->setAttribute(html_names::kStyleAttr, AtomicString("top: 0"));
   UpdateAllLifecyclePhasesExceptPaint();
 
-  EXPECT_FALSE(target_object->HasLayer());
+  EXPECT_FALSE(target_element->GetLayoutObject()->HasLayer());
   EXPECT_TRUE(body_layer->SelfNeedsRepaint());
-  EXPECT_TRUE(old_compositing_container->DescendantNeedsRepaint());
+  EXPECT_TRUE(old_painting_container->DescendantNeedsRepaint());
 
   UpdateAllLifecyclePhasesForTest();
 }
@@ -1880,13 +1914,18 @@ TEST_P(PaintLayerTest, HitTestPseudoElementWithContinuation) {
     <span id='target'></span>
   )HTML");
   Element* target = GetDocument().getElementById(AtomicString("target"));
+  PseudoElement* before = target->GetPseudoElement(kPseudoIdBefore);
+  ScopedPseudoElementsHitTestableForTest scoped_feature(true);
   HitTestRequest request(HitTestRequest::kReadOnly | HitTestRequest::kActive);
   HitTestLocation location(PhysicalOffset(10, 10));
   HitTestResult result(request, location);
   GetDocument().GetLayoutView()->HitTest(location, result);
+  // InnerNodeForHitTesting() always resolves to the originating element so
+  // that selection and editing work correctly. The raw pseudo is stored in
+  // inner_possibly_pseudo_node_ and accessed via InnerPossiblyPseudoNode().
   EXPECT_EQ(target, result.InnerNode());
-  EXPECT_EQ(target->GetPseudoElement(kPseudoIdBefore),
-            result.InnerPossiblyPseudoNode());
+  EXPECT_EQ(before, result.InnerPossiblyPseudoNode());
+  EXPECT_EQ(before, result.InnerPossiblyPseudoElement());
 }
 
 TEST_P(PaintLayerTest, HitTestFirstLetterPseudoElement) {
@@ -2055,8 +2094,8 @@ TEST_P(PaintLayerTest, HitTestOverlayResizer) {
   )HTML");
 
   for (int i = 0; i < 6; i++) {
-    Element* target_element = GetDocument().getElementById(
-        AtomicString(String::Format("target_%d", i)));
+    Element* target_element =
+        GetDocument().getElementById(AtomicString(Format("target_{}", i)));
     target_element->setAttribute(html_names::kStyleAttr,
                                  AtomicString("display: block"));
     UpdateAllLifecyclePhasesForTest();
@@ -2205,6 +2244,41 @@ TEST_P(PaintLayerTest, HitTestTinyLayerUnderLargeScale) {
     GetLayoutView().HitTest(location, result);
     EXPECT_EQ(target, result.InnerNode()) << " x=" << x;
   }
+}
+
+TEST_P(PaintLayerTest, HitTestInfiniteHitTestAreaSmallScaleTransform) {
+  SetBodyInnerHTML(R"HTML(
+    <svg width="100" height="100">
+      <foreignObject width="100" height="100">
+        <div id="target" style="transform: scale(0.25); transform-origin: 0 0;
+                                width: 400px; height: 400px"></div>
+      </foreignObject>
+    </svg>
+  )HTML");
+
+  auto* target = GetDocument().getElementById(AtomicString("target"));
+  for (const auto& point : {gfx::PointF(25, 50), gfx::PointF(75, 50)}) {
+    const HitTestLocation location(point);
+    HitTestResult result;
+    GetLayoutView().HitTest(location, result);
+    EXPECT_EQ(target, result.InnerNode()) << " point=" << point.ToString();
+  }
+}
+
+TEST_P(PaintLayerTest, ReplacedNormalFlowStackingForeignObjectIsNotStacked) {
+  SetBodyInnerHTML(R"HTML(
+    <svg width="200" height="200">
+      <foreignObject id="foreignObject" width="100" height="100"></foreignObject>
+    </svg>
+  )HTML");
+
+  PaintLayer* foreign_object = GetPaintLayerByElementId("foreignObject");
+  LayoutBoxModelObject& layout_object = foreign_object->GetLayoutObject();
+
+  EXPECT_TRUE(foreign_object->IsReplacedNormalFlowStackingContext());
+  EXPECT_TRUE(layout_object.IsStackingContext());
+  EXPECT_FALSE(layout_object.IsStacked());
+  EXPECT_TRUE(layout_object.HasLayer());
 }
 
 TEST_P(PaintLayerTest, AddLayerNeedsRepaintAndCullRectUpdate) {
@@ -2516,7 +2590,7 @@ TEST_P(PaintLayerTest, ScrollContainerLayerTransformScroller) {
 }
 
 TEST_P(PaintLayerTest, HitTestScrollMarkerPseudoElement) {
-  GetDocument().body()->setInnerHTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
       "<style>"
       "#scroller { overflow: scroll; scroll-marker-group: before; width: "
       "100px; height: 100px; }"
@@ -2542,13 +2616,53 @@ TEST_P(PaintLayerTest, HitTestScrollMarkerPseudoElement) {
   HitTestLocation location(PhysicalOffset(25, 20));
   HitTestResult result(request, location);
   GetDocument().GetLayoutView()->HitTest(location, result);
-  EXPECT_EQ(second_scroll_marker, result.InnerNode());
+  // InnerNodeForHitTesting() always resolves to the originating element to
+  // maintain the non-pseudo invariant on inner_node_. The pseudo itself is
+  // accessible via InnerPossiblyPseudoNode() for hover/dispatch purposes.
+  EXPECT_EQ(second_div, result.InnerNode());
+  EXPECT_EQ(second_scroll_marker, result.InnerPossiblyPseudoNode());
 
   MouseEvent& event = *MouseEvent::Create();
   event.SetType(event_type_names::kClick);
   event.SetTarget(second_scroll_marker);
   second_scroll_marker->DefaultEventHandler(event);
   EXPECT_EQ(scroller->scrollTop(), 100);
+}
+
+TEST_P(PaintLayerTest, PaintLayerCanvasTransformUpdated) {
+  ScopedCanvasDrawElementForTest forced_canvas_draw_element_feature(true);
+  ScopedElementCanvasTransformForTest forced_canvas_transform_feature(true);
+
+  SetBodyInnerHTML(R"HTML(
+    <canvas id='canvas' width='200' height='200' layoutsubtree>
+      <div id='target' style='width: 100px; height: 100px;'></div>
+    </canvas>
+  )HTML");
+
+  auto* target = GetDocument().getElementById(AtomicString("target"));
+  auto* target_layer = GetPaintLayerByElementId("target");
+  EXPECT_EQ(nullptr, target_layer->Transform());
+
+  // Setting canvas transform allocates PaintLayer::Transform() and updates
+  // rect.
+  target->SetCanvasTransform(gfx::Transform::MakeTranslation(20, 30));
+
+  UpdateAllLifecyclePhasesForTest();
+
+  EXPECT_EQ(gfx::Transform::MakeTranslation(20, 30),
+            *target_layer->Transform());
+  EXPECT_EQ(gfx::RectF(28, 38, 100, 100),
+            target->GetBoundingClientRectNoLifecycleUpdate());
+
+  // Basic invalidation: updating canvas transform.
+  target->SetCanvasTransform(gfx::Transform::MakeTranslation(50, 60));
+
+  UpdateAllLifecyclePhasesForTest();
+
+  EXPECT_EQ(gfx::Transform::MakeTranslation(50, 60),
+            *target_layer->Transform());
+  EXPECT_EQ(gfx::RectF(58, 68, 100, 100),
+            target->GetBoundingClientRectNoLifecycleUpdate());
 }
 
 }  // namespace blink

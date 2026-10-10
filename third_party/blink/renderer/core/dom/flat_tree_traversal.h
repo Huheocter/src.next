@@ -29,11 +29,11 @@
 
 #include "base/dcheck_is_on.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/layout_tree_builder_traversal.h"
 #include "third_party/blink/renderer/core/dom/node_traversal.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/dom/traversal_range.h"
+#include "third_party/blink/renderer/core/html/html_slot_element.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
@@ -74,6 +74,9 @@ class CORE_EXPORT FlatTreeTraversal {
 
   static ContainerNode* Parent(const Node&);
   static Element* ParentElement(const Node&);
+  // Returns the flat tree parent element, skipping over any HTMLSlotElements.
+  // Used to correctly determine if a node is a child of a canvas element.
+  static Element* ParentElementSkippingSlots(const Node&);
   // Return the passed in Node if it is an Element, otherwise return the
   // ParentElement()
   static const Element* InclusiveParentElement(const Node&);
@@ -97,6 +100,8 @@ class CORE_EXPORT FlatTreeTraversal {
   // NextSkippingChildren(3) will return 4.
   // NextSkippingChildren(2) will return 3.
   // NextSkippingChildren(4) will return nullptr.
+  // If you're looking for the "Previous" version of this method, see
+  // PreviousAbsoluteSibling().
   static Node* NextSkippingChildren(const Node&);
   static Node* NextSkippingChildren(const Node&, const Node* stay_within);
 
@@ -126,6 +131,11 @@ class CORE_EXPORT FlatTreeTraversal {
   // returns true if |other| contains |node|, otherwise returns
   // false. If |other| is |node|, this function returns false.
   static bool IsDescendantOf(const Node& /*node*/, const Node& other);
+
+  // Like |IsDescendantOf|, but also returns true if |node| == |other|.
+  static bool IsInclusiveDescendantOf(const Node& node, const Node& other) {
+    return node == other || IsDescendantOf(node, other);
+  }
 
   static bool Contains(const ContainerNode& container, const Node& node) {
     AssertPrecondition(container);
@@ -169,19 +179,8 @@ class CORE_EXPORT FlatTreeTraversal {
     kTraversalDirectionBackward
   };
 
-  static void AssertPrecondition(const Node& node) {
-    DCHECK(!node.GetDocument().IsFlatTreeTraversalForbidden());
-    DCHECK(!node.IsShadowRoot())
-        << "Shadow roots don't have layout objects. Their host has one, and "
-           "their children have them, and those two are connected.";
-  }
-
-  static void AssertPostcondition(const Node* node) {
-#if DCHECK_IS_ON()
-    if (node)
-      AssertPrecondition(*node);
-#endif
-  }
+  static void AssertPrecondition(const Node& node);
+  static void AssertPostcondition(const Node* node);
 
   static Node* ResolveDistributionStartingAt(const Node*, TraversalDirection);
 
@@ -218,6 +217,15 @@ inline ContainerNode* FlatTreeTraversal::Parent(const Node& node) {
 
 inline Element* FlatTreeTraversal::ParentElement(const Node& node) {
   return DynamicTo<Element>(FlatTreeTraversal::Parent(node));
+}
+
+inline Element* FlatTreeTraversal::ParentElementSkippingSlots(
+    const Node& node) {
+  Element* parent = FlatTreeTraversal::ParentElement(node);
+  while (parent && IsA<HTMLSlotElement>(parent)) {
+    parent = FlatTreeTraversal::ParentElement(*parent);
+  }
+  return parent;
 }
 
 inline Node* FlatTreeTraversal::NextSibling(const Node& node) {

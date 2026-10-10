@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <set>
+#include <string>
 
 #include "base/files/file_path.h"
 #include "base/memory/raw_ptr.h"
@@ -50,6 +51,9 @@ class DownloadPrefs {
 
   // Returns the default download directory.
   static const base::FilePath& GetDefaultDownloadDirectory();
+
+  // Returns the default download name.
+  static std::string GetDefaultDownloadName();
 
   // Returns the default download directory for the current profile.
   base::FilePath GetDefaultDownloadDirectoryForProfile() const;
@@ -173,6 +177,11 @@ class DownloadPrefs {
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || \
     BUILDFLAG(IS_MAC)
   bool should_open_pdf_in_system_reader_;
+#endif
+
+#if BUILDFLAG(IS_CHROMEOS)
+  class DriveHandler;
+  std::unique_ptr<DriveHandler> drive_handler_;
 #endif
 
   // If this is true, SanitizeDownloadTargetPath will always return the passed

@@ -13,6 +13,7 @@
 #include "extensions/common/features/json_feature_provider_source.h"
 #include "extensions/common/icons/extension_icon_set.h"
 #include "extensions/common/manifest_handler.h"
+#include "extensions/common/manifest_handler_registry.h"
 #include "extensions/common/manifest_handlers/icons_handler.h"
 #include "extensions/common/permissions/permissions_info.h"
 
@@ -30,9 +31,11 @@ ExtensionsClient* ExtensionsClient::Get() {
 }
 
 void ExtensionsClient::Set(ExtensionsClient* client) {
-  // This can happen in unit tests, where the utility thread runs in-process.
-  if (g_client)
+  if (!client) {
+    g_client = nullptr;
     return;
+  }
+  CHECK(!g_client);
   g_client = client;
   g_client->DoInitialize();
 }
@@ -47,6 +50,9 @@ ExtensionsClient::GetFeatureDelegatedAvailabilityCheckMap() const {
 
 void ExtensionsClient::SetFeatureDelegatedAvailabilityCheckMap(
     Feature::FeatureDelegatedAvailabilityCheckMap map) {
+  for (const auto& [name, handler] : map) {
+    CHECK(handler) << "Null delegated availability check handler for " << name;
+  }
   availability_check_map_ = std::move(map);
 }
 
@@ -125,8 +131,11 @@ void ExtensionsClient::DoInitialize() {
 
   DCHECK(!ManifestHandler::IsRegistrationFinalized());
   PermissionsInfo* permissions_info = PermissionsInfo::GetInstance();
+
+  ManifestHandlerRegistry* registry = ManifestHandlerRegistry::Get();
+
   for (const auto& provider : api_providers_) {
-    provider->RegisterManifestHandlers();
+    provider->RegisterManifestHandlers(registry);
     provider->RegisterPermissions(permissions_info);
   }
   ManifestHandler::FinalizeRegistration();

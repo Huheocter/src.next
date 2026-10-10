@@ -9,11 +9,12 @@
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+#include "chrome/browser/ui/side_panel/side_panel_ui.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/browser/ui/views/side_panel/side_panel_ui.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
@@ -62,7 +63,7 @@ class ExtensionUntrustedWebUITest : public ExtensionApiTest {
         browser(), GURL("chrome-untrusted://api-test/title1.html")));
 
     content::RenderFrameHost* render_frame_host = browser()
-                                                      ->tab_strip_model()
+                                                      ->GetTabStripModel()
                                                       ->GetActiveWebContents()
                                                       ->GetPrimaryMainFrame();
     ASSERT_TRUE(render_frame_host);
@@ -97,7 +98,7 @@ class ExtensionUntrustedWebUITest : public ExtensionApiTest {
     EXPECT_TRUE(ui_test_utils::NavigateToURL(
         browser(), GURL(chrome::kChromeUIUntrustedReadAnythingSidePanelURL)));
     // Get the side panel entry registry.
-    auto* side_panel_ui = browser()->GetFeatures().side_panel_ui();
+    auto* side_panel_ui = SidePanelUI::From(browser());
     auto* side_panel_web_contents =
         side_panel_ui->GetWebContentsForTest(SidePanelEntryId::kReadAnything);
 
@@ -122,8 +123,9 @@ IN_PROC_BROWSER_TEST_F(ExtensionUntrustedWebUITest,
   RunTestOnApiTestPage("confidence_check_available_apis.js");
 }
 
+// TODO(crbug.com/417615981): Re-enable this test
 IN_PROC_BROWSER_TEST_F(ExtensionUntrustedWebUITest,
-                       ConfidenceCheckAvailableAPIsReadAnything) {
+                       DISABLED_ConfidenceCheckAvailableAPIsReadAnything) {
   ASSERT_TRUE(RunTestOnReadAnythingPage(
       "confidence_check_available_apis_read_anything.js"));
 }

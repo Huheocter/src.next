@@ -5,7 +5,6 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_UNPOSITIONED_FLOAT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_UNPOSITIONED_FLOAT_H_
 
-#include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/block_break_token.h"
 #include "third_party/blink/renderer/core/layout/block_node.h"
@@ -30,37 +29,34 @@ struct CORE_EXPORT UnpositionedFloat final {
                     const BlockBreakToken* token,
                     const LogicalSize available_size,
                     const LogicalSize percentage_size,
-                    const LogicalSize replaced_percentage_size,
                     const BfcOffset& origin_bfc_offset,
                     const ConstraintSpace& parent_space,
                     const ComputedStyle& parent_style,
                     LayoutUnit fragmentainer_block_size,
                     LayoutUnit fragmentainer_block_offset,
-                    bool is_hidden_for_paint)
+                    LineClampFloatState line_clamp_state)
       : node(node),
         token(token),
         available_size(available_size),
         percentage_size(percentage_size),
-        replaced_percentage_size(replaced_percentage_size),
         origin_bfc_offset(origin_bfc_offset),
         parent_space(parent_space),
         parent_style(parent_style),
         fragmentainer_block_size(fragmentainer_block_size),
         fragmentainer_block_offset(fragmentainer_block_offset),
-        is_hidden_for_paint(is_hidden_for_paint) {}
+        line_clamp_state(line_clamp_state) {}
 
   BlockNode node;
   const BlockBreakToken* token = nullptr;
 
   const LogicalSize available_size;
   const LogicalSize percentage_size;
-  const LogicalSize replaced_percentage_size;
   const BfcOffset origin_bfc_offset;
   const ConstraintSpace& parent_space;
   const ComputedStyle& parent_style;
   LayoutUnit fragmentainer_block_size;
   LayoutUnit fragmentainer_block_offset;
-  bool is_hidden_for_paint;
+  LineClampFloatState line_clamp_state;
 
   // layout_result and margins are used as a cache when measuring the
   // inline_size of a float in an inline context.

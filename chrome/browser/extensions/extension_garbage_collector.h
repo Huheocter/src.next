@@ -7,13 +7,19 @@
 
 #include <map>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "base/files/file_path.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "chrome/browser/extensions/install_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "extensions/browser/install_observer.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_id.h"
+#include "extensions/common/mojom/manifest.mojom-shared.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace content {
 class BrowserContext;
@@ -46,11 +52,11 @@ class ExtensionGarbageCollector : public KeyedService, public InstallObserver {
 
   // InstallObserver:
   void OnBeginCrxInstall(content::BrowserContext* context,
-                         const CrxInstaller& installer,
                          const ExtensionId& extension_id) override;
   void OnFinishCrxInstall(content::BrowserContext* context,
-                          const CrxInstaller& installer,
+                          const base::FilePath& source_file,
                           const ExtensionId& extension_id,
+                          const Extension* extension,
                           bool success) override;
 
  protected:
@@ -67,6 +73,17 @@ class ExtensionGarbageCollector : public KeyedService, public InstallObserver {
       const base::FilePath& install_directory,
       const std::multimap<ExtensionId, base::FilePath>& extension_paths,
       bool unpacked);
+
+  // Runs on the UI thread with the set of unpacked extensions whose on-disk
+  // source directory no longer exists (identified on a file thread). Such
+  // extensions never load, so no unload/uninstall event fires and their state
+  // leaks. Removing their prefs deletes core extension state and notifies
+  // ExtensionPrefsObserver::OnExtensionPrefsDeleted(), letting API-specific
+  // systems (e.g. declarativeNetRequest) release the state they associated
+  // with the extension.
+  void OnDeletedUnpackedExtensionsIdentified(
+      std::vector<std::pair<ExtensionId, mojom::ManifestLocation>>
+          deleted_extensions);
 
   // The BrowserContext associated with the GarbageCollector.
   raw_ptr<content::BrowserContext> context_;

@@ -6,24 +6,29 @@
 
 #include <vector>
 
+#include "base/check.h"
+#include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notreached.h"
 #include "base/time/time.h"
 #include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/browser/feedback/show_feedback_page.h"
 #include "chrome/browser/net/referrer.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
+#include "chrome/browser/ui/tab_contents/tab_contents_iterator.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/tabs/public/tab_interface.h"
 #include "components/ui_metrics/sadtab_metrics_types.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/page_transition_types.h"
+#include "ui/base/window_open_disposition.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/memory/oom_memory_details.h"
@@ -35,10 +40,10 @@ namespace {
 void RecordEvent(bool feedback, ui_metrics::SadTabEvent event) {
   if (feedback) {
     UMA_HISTOGRAM_ENUMERATION(ui_metrics::kSadTabFeedbackHistogramKey, event,
-                              ui_metrics::SadTabEvent::MAX_SAD_TAB_EVENT);
+                              ui_metrics::SadTabEvent::COUNT);
   } else {
     UMA_HISTOGRAM_ENUMERATION(ui_metrics::kSadTabReloadHistogramKey, event,
-                              ui_metrics::SadTabEvent::MAX_SAD_TAB_EVENT);
+                              ui_metrics::SadTabEvent::COUNT);
   }
 }
 
@@ -46,29 +51,23 @@ constexpr char kCategoryTagCrash[] = "Crash";
 
 // Return true if this function has been called in the last 10 seconds.
 bool IsRepeatedlyCrashing() {
-  const int kMaxSecondsSinceLastCrash = 10;
+  static constexpr base::TimeDelta kMaxTimeSinceLastCrash = base::Seconds(10);
 
-  static int64_t last_called_ts = 0;
-  base::TimeTicks last_called(base::TimeTicks::UnixEpoch());
+  static base::TimeTicks last_called;
 
-  if (last_called_ts)
-    last_called = base::TimeTicks::FromInternalValue(last_called_ts);
+  const base::TimeTicks now = base::TimeTicks::Now();
+  const bool crashed_recently =
+      !last_called.is_null() && (now - last_called) < kMaxTimeSinceLastCrash;
 
-  bool crashed_recently = (base::TimeTicks().Now() - last_called).InSeconds() <
-                          kMaxSecondsSinceLastCrash;
-
-  last_called_ts = base::TimeTicks().Now().ToInternalValue();
+  last_called = now;
   return crashed_recently;
 }
 
 bool AreOtherTabsOpen() {
-  size_t tab_count = 0;
-  for (Browser* browser : *BrowserList::GetInstance()) {
-    tab_count += browser->tab_strip_model()->count();
-    if (tab_count > 1U)
-      break;
-  }
-  return (tab_count > 1U);
+  int count = 0;
+  tabs::ForEachTabInterface(
+      [&count](tabs::TabInterface* tab) { return ++count < 2; });
+  return count > 1;
 }
 
 }  // namespace
@@ -86,6 +85,7 @@ bool SadTab::ShouldShow(base::TerminationStatus status) {
     case base::TERMINATION_STATUS_INTEGRITY_FAILURE:
 #endif
     case base::TERMINATION_STATUS_OOM:
+    case base::TERMINATION_STATUS_EVICTED_FOR_MEMORY:
       return true;
     case base::TERMINATION_STATUS_NORMAL_TERMINATION:
     case base::TERMINATION_STATUS_STILL_RUNNING:
@@ -100,8 +100,9 @@ bool SadTab::ShouldShow(base::TerminationStatus status) {
 }
 
 int SadTab::GetTitle() {
-  if (!is_repeatedly_crashing_)
+  if (!is_repeatedly_crashing_) {
     return IDS_SAD_TAB_TITLE;
+  }
   switch (kind_) {
 #if BUILDFLAG(IS_CHROMEOS)
     case SAD_TAB_KIND_KILLED_BY_OOM:
@@ -129,9 +130,10 @@ int SadTab::GetInfoMessage() {
       return IDS_KILLED_TAB_BY_OOM_MESSAGE;
 #endif
     case SAD_TAB_KIND_OOM:
-      if (is_repeatedly_crashing_)
+      if (is_repeatedly_crashing_) {
         return AreOtherTabsOpen() ? IDS_SAD_TAB_OOM_MESSAGE_TABS
                                   : IDS_SAD_TAB_OOM_MESSAGE_NOTABS;
+      }
       return IDS_SAD_TAB_MESSAGE;
     case SAD_TAB_KIND_CRASHED:
     case SAD_TAB_KIND_KILLED:
@@ -156,8 +158,9 @@ const char* SadTab::GetHelpLinkURL() {
 }
 
 std::vector<int> SadTab::GetSubMessages() {
-  if (!is_repeatedly_crashing_)
+  if (!is_repeatedly_crashing_) {
     return std::vector<int>();
+  }
 
   switch (kind_) {
 #if BUILDFLAG(IS_CHROMEOS)
@@ -171,8 +174,9 @@ std::vector<int> SadTab::GetSubMessages() {
       std::vector<int> message_ids = {IDS_SAD_TAB_RELOAD_RESTART_BROWSER,
                                       IDS_SAD_TAB_RELOAD_RESTART_DEVICE};
       // Only show Incognito suggestion if not already in Incognito mode.
-      if (!web_contents_->GetBrowserContext()->IsOffTheRecord())
+      if (!web_contents_->GetBrowserContext()->IsOffTheRecord()) {
         message_ids.insert(message_ids.begin(), IDS_SAD_TAB_RELOAD_INCOGNITO);
+      }
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
       // Note: on macOS, Linux and ChromeOS, the first bullet is either one of
       // IDS_SAD_TAB_RELOAD_CLOSE_TABS or IDS_SAD_TAB_RELOAD_CLOSE_NOTABS
@@ -200,12 +204,13 @@ void SadTab::RecordFirstPaint() {
 void SadTab::PerformAction(SadTab::Action action) {
   DCHECK(recorded_paint_);
   switch (action) {
-    case Action::BUTTON:
+    case Action::kButton:
       RecordEvent(show_feedback_button_,
                   ui_metrics::SadTabEvent::BUTTON_CLICKED);
       if (show_feedback_button_) {
         chrome::ShowFeedbackPage(
-            chrome::FindBrowserWithTab(web_contents_),
+            GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(
+                web_contents_),
             feedback::kFeedbackSourceSadTabPage,
             std::string() /* description_template */,
             l10n_util::GetStringUTF8(kind_ == SAD_TAB_KIND_CRASHED
@@ -217,12 +222,13 @@ void SadTab::PerformAction(SadTab::Action action) {
                                               true);
       }
       break;
-    case Action::HELP_LINK:
+    case Action::kHelpLink:
       RecordEvent(show_feedback_button_,
                   ui_metrics::SadTabEvent::HELP_LINK_CLICKED);
-      content::OpenURLParams params(GURL(GetHelpLinkURL()), content::Referrer(),
-                                    WindowOpenDisposition::CURRENT_TAB,
-                                    ui::PAGE_TRANSITION_LINK, false);
+      content::OpenURLParams params =
+          content::OpenURLParams::CreateBrowserInitiated(
+              GURL(GetHelpLinkURL()), WindowOpenDisposition::CURRENT_TAB,
+              ui::PAGE_TRANSITION_LINK);
       web_contents_->OpenURL(params, /*navigation_handle_callback=*/{});
       break;
   }

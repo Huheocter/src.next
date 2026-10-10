@@ -9,20 +9,21 @@
 #include <string>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "base/token.h"
 #include "components/sessions/core/session_types.h"
 
-class Browser;
+class BrowserWindowInterface;
 
 namespace content {
-class SessionStorageNamespace;
+class SessionStorageNamespaceHandle;
 class WebContents;
 }  // namespace content
 
 namespace sessions {
 class SerializedNavigationEntry;
 struct SerializedUserAgentOverride;
-}
+}  // namespace sessions
 
 namespace chrome {
 
@@ -43,8 +44,8 @@ namespace chrome {
 // whether `browser` is (or will be) the active browser.
 // Returns the WebContents of the restored tab.
 content::WebContents* AddRestoredTab(
-    Browser* browser,
-    const std::vector<sessions::SerializedNavigationEntry>& navigations,
+    BrowserWindowInterface* browser,
+    base::span<const sessions::SerializedNavigationEntry> navigations,
     int tab_index,
     int selected_navigation,
     const std::string& extension_app_id,
@@ -53,7 +54,7 @@ content::WebContents* AddRestoredTab(
     bool pin,
     base::TimeTicks last_active_time_ticks,
     base::Time last_active_time,
-    content::SessionStorageNamespace* storage_namespace,
+    content::SessionStorageNamespaceHandle* storage_namespace,
     const sessions::SerializedUserAgentOverride& user_agent_override,
     const std::map<std::string, std::string>& extra_data,
     bool from_session_restore,
@@ -63,11 +64,11 @@ content::WebContents* AddRestoredTab(
 // history restored from the SessionRestore and TabRestoreService systems.
 // Returns the WebContents of the restored tab.
 content::WebContents* ReplaceRestoredTab(
-    Browser* browser,
-    const std::vector<sessions::SerializedNavigationEntry>& navigations,
+    BrowserWindowInterface* browser,
+    base::span<const sessions::SerializedNavigationEntry> navigations,
     int selected_navigation,
     const std::string& extension_app_id,
-    content::SessionStorageNamespace* session_storage_namespace,
+    content::SessionStorageNamespaceHandle* session_storage_namespace,
     const sessions::SerializedUserAgentOverride& user_agent_override,
     const std::map<std::string, std::string>& extra_data,
     bool from_session_restore);

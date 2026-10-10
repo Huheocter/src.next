@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.tabmodel;
 import android.util.SparseArray;
 
 import org.chromium.base.ObserverList;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabCreationState;
 import org.chromium.chrome.browser.tab.TabLaunchType;
@@ -15,6 +16,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 
 /** Allows observing registration (e.g. add / remove) events of Tabs from a TabModelSelector. */
+@NullMarked
 public final class TabModelSelectorTabRegistrationObserver {
     private final TabModelSelectorTabModelObserver mTabModelObserver;
     private final SparseArray<Tab> mTabsToClose = new SparseArray<>();
@@ -67,12 +69,21 @@ public final class TabModelSelectorTabRegistrationObserver {
                     }
 
                     @Override
+                    public void willCloseTabs(
+                            List<Tab> tabs, boolean isAllTabs, boolean allowUndo) {
+                        for (Tab tab : tabs) {
+                            mTabsToClose.put(tab.getId(), tab);
+                        }
+                    }
+
+                    @Override
                     public void tabClosureUndone(Tab tab) {
                         mTabsToClose.remove(tab.getId());
                     }
 
                     @Override
-                    public void onFinishingTabClosure(Tab tab) {
+                    public void onFinishingTabClosure(
+                            Tab tab, @TabClosingSource int closingSource) {
                         if (mTabsToClose.get(tab.getId()) != null) {
                             mTabsToClose.remove(tab.getId());
                             onTabUnregistered(tab);
@@ -93,8 +104,8 @@ public final class TabModelSelectorTabRegistrationObserver {
                         for (int i = 0; i < tabModels.size(); i++) {
                             TabModel tabModel = tabModels.get(i);
                             TabList comprehensiveTabList = tabModel.getComprehensiveModel();
-                            for (int j = 0; j < comprehensiveTabList.getCount(); j++) {
-                                onTabRegistered(comprehensiveTabList.getTabAt(j));
+                            for (Tab tab : comprehensiveTabList) {
+                                onTabRegistered(tab);
                             }
                         }
                     }
@@ -147,5 +158,6 @@ public final class TabModelSelectorTabRegistrationObserver {
         Tab[] tabs = mRegisteredTabs.toArray(new Tab[0]);
         for (Tab tab : tabs) onTabUnregistered(tab);
         assert mRegisteredTabs.isEmpty();
+        mObservers.clear();
     }
 }

@@ -5,17 +5,22 @@
 #ifndef CONTENT_BROWSER_CHILD_THREAD_TYPE_SWITCHER_LINUX_H_
 #define CONTENT_BROWSER_CHILD_THREAD_TYPE_SWITCHER_LINUX_H_
 
+#include "base/memory/scoped_refptr.h"
 #include "base/process/process_handle.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/threading/sequence_bound.h"
+#include "content/common/content_export.h"
 #include "content/common/thread_type_switcher.mojom.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
-#include "mojo/public/cpp/bindings/receiver_set.h"
+#include "mojo/public/cpp/bindings/receiver.h"
 
 namespace content {
 
 // Browser-side implementation of mojom::ThreadTypeSwitcher which allows a
 // sandboxed process's threads to change their priority (which can't be done
 // inside the sandbox).
-class ChildThreadTypeSwitcher : public mojom::ThreadTypeSwitcher {
+class CONTENT_EXPORT ChildThreadTypeSwitcher
+    : public mojom::ThreadTypeSwitcher {
  public:
   // Constructs an unbound ChildThreadTypeSwitcher.
   explicit ChildThreadTypeSwitcher();
@@ -36,11 +41,21 @@ class ChildThreadTypeSwitcher : public mojom::ThreadTypeSwitcher {
   void SetPid(base::ProcessId child_pid);
 
   // mojom::ThreadTypeSwitcher:
-  void SetThreadType(int32_t ns_tid, base::ThreadType thread_type) override;
+  void SetThreadTypes(std::vector<mojom::ThreadTypeChangePtr> changes) override;
+
+ protected:
+  // The sequence the changes are applied on: the process launcher task
+  // runner. Virtual so tests can substitute their own.
+  virtual scoped_refptr<base::SequencedTaskRunner> GetTaskRunner();
 
  private:
+  class LauncherThreadState;
+
   base::ProcessId child_pid_ = base::kNullProcessHandle;
   mojo::Receiver<mojom::ThreadTypeSwitcher> receiver_{this};
+  // Applies the changes; created with the first batch, lives on the process
+  // launcher task runner.
+  base::SequenceBound<LauncherThreadState> launcher_thread_state_;
 };
 }  // namespace content
 

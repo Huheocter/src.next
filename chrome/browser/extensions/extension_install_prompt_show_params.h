@@ -9,7 +9,10 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "ui/gfx/native_widget_types.h"
+#include "extensions/buildflags/buildflags.h"
+#include "ui/gfx/native_ui_types.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 class Profile;
 
@@ -17,7 +20,7 @@ namespace content {
 class WebContents;
 }
 
-namespace views {
+namespace ui {
 class NativeWindowTracker;
 }
 
@@ -72,7 +75,7 @@ class ExtensionInstallPromptShowParams {
 
   // Used to track the parent_window_'s lifetime. We need to explicitly track it
   // because aura::Window does not expose a WeakPtr like WebContents.
-  std::unique_ptr<views::NativeWindowTracker> native_window_tracker_;
+  std::unique_ptr<ui::NativeWindowTracker> native_window_tracker_;
 };
 
 namespace test {

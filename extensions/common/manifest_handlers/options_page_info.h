@@ -14,7 +14,7 @@
 #include "url/gurl.h"
 
 namespace base {
-class Value;
+class DictValue;
 }
 
 namespace extensions {
@@ -22,6 +22,8 @@ namespace extensions {
 // A class to provide options page configuration settings from the manifest.
 class OptionsPageInfo : public Extension::ManifestData {
  public:
+  static const char* kManifestDataKey;
+
   OptionsPageInfo(const GURL& options_page,
                   bool chrome_styles,
                   bool open_in_tab);
@@ -51,7 +53,7 @@ class OptionsPageInfo : public Extension::ManifestData {
 
   static std::unique_ptr<OptionsPageInfo> Create(
       Extension* extension,
-      const base::Value::Dict* options_ui_dict,
+      const base::DictValue* options_ui_dict,
       const std::string& options_page_string,
       std::vector<InstallWarning>* install_warnings,
       std::u16string* error);
@@ -78,7 +80,7 @@ class OptionsPageHandler : public ManifestHandler {
   ~OptionsPageHandler() override;
 
   bool Parse(Extension* extension, std::u16string* error) override;
-  bool Validate(const Extension* extension,
+  bool Validate(const Extension& extension,
                 std::string* error,
                 std::vector<InstallWarning>* warnings) const override;
 

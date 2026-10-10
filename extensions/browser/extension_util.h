@@ -8,9 +8,8 @@
 #include <string>
 #include <vector>
 
-#include "base/functional/callback.h"
-#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/common/child_process_id.h"
 #include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/manifest.h"
@@ -31,7 +30,12 @@ class SiteInstance;
 class StoragePartition;
 class StoragePartitionConfig;
 class RenderFrameHost;
+class WebContents;
 }  // namespace content
+
+namespace download {
+class DownloadItem;
+}  // namespace download
 
 namespace extensions {
 class Extension;
@@ -46,25 +50,41 @@ namespace util {
 // Returns true if the extension can be enabled in incognito mode.
 bool CanBeIncognitoEnabled(const Extension* extension);
 
-// Returns true if |extension_id| can run in an incognito window.
+// Returns true if `extension_id` can run in an incognito window.
 bool IsIncognitoEnabled(const ExtensionId& extension_id,
                         content::BrowserContext* context);
+bool IsIncognitoEnabled(const Extension* extension,
+                        content::BrowserContext* context);
 
-// Returns true if |extension| can see events and data from another sub-profile
+// Returns true if `extension` can see events and data from another sub-profile
 // (incognito to original profile, or vice versa).
 bool CanCrossIncognito(const Extension* extension,
                        content::BrowserContext* context);
+
+// Returns whether `web_contents` belongs to `browser_context`, optionally
+// treating an incognito context as belonging to its original context.
+bool IsWebContentsInContext(content::WebContents& web_contents,
+                            content::BrowserContext& browser_context,
+                            bool include_incognito);
+
+// Returns true if the extension associated with `extension_id` is idle and it
+// is safe to perform actions such as updating.
+bool IsExtensionIdle(const ExtensionId& extension_id,
+                     content::BrowserContext* browser_context);
+
+// Returns true if prompting for external extensions is enabled.
+bool IsPromptingEnabled();
 
 // Returns true if this extension can inject scripts into pages with file URLs.
 bool AllowFileAccess(const ExtensionId& extension_id,
                      content::BrowserContext* context);
 
-// Returns the StoragePartition domain for |extension|.
-// Note: The reference returned has the same lifetime as |extension|.
+// Returns the StoragePartition domain for `extension`.
+// Note: The reference returned has the same lifetime as `extension`.
 const std::string& GetPartitionDomainForExtension(const Extension* extension);
 
 // Returns an extension specific StoragePartitionConfig if the extension
-// associated with |extension_id| has isolated storage.
+// associated with `extension_id` has isolated storage.
 // Otherwise, return the default StoragePartitionConfig.
 content::StoragePartitionConfig GetStoragePartitionConfigForExtensionId(
     const ExtensionId& extension_id,
@@ -80,10 +100,10 @@ content::ServiceWorkerContext* GetServiceWorkerContextForExtensionId(
     const ExtensionId& extension_id,
     content::BrowserContext* browser_context);
 
-// Maps a |file_url| to a |file_path| on the local filesystem, including
+// Maps a `file_url` to a `file_path` on the local filesystem, including
 // resources in extensions. Returns true on success. See NaClBrowserDelegate for
-// full details. If |use_blocking_api| is false, only a subset of URLs will be
-// handled. If |use_blocking_api| is true, blocking file operations may be used,
+// full details. If `use_blocking_api` is false, only a subset of URLs will be
+// handled. If `use_blocking_api` is true, blocking file operations may be used,
 // and this must be called on threads that allow blocking. Otherwise this can be
 // called on any thread.
 bool MapUrlToLocalFilePath(const ExtensionSet* extensions,
@@ -100,20 +120,20 @@ bool CanWithholdPermissionsFromExtension(
     const mojom::ManifestLocation location);
 
 // Returns a unique int id for each context. Prefer using
-// `BrowserContext::UniqueId()` directly.
+// `BrowserContext::UniqueToken()` directly.
 // TODO(crbug.com/40267637):  Migrate callers to use the `context` unique id
 // directly. For that we need to update all data keyed by integer context ids to
 // be keyed by strings instead.
 int GetBrowserContextId(content::BrowserContext* context);
 
-// Returns whether the |extension| should be loaded in the given
-// |browser_context|.
+// Returns whether the `extension` should be loaded in the given
+// `browser_context`.
 bool IsExtensionVisibleToContext(const Extension& extension,
                                  content::BrowserContext* browser_context);
 
 // Initializes file scheme access if the extension has such permission.
 void InitializeFileSchemeAccessForExtension(
-    int render_process_id,
+    content::ChildProcessId render_process_id,
     const ExtensionId& extension_id,
     content::BrowserContext* browser_context);
 
@@ -161,6 +181,25 @@ bool IsAppLaunchable(const ExtensionId& extension_id,
 // Returns true if `extension_id` can be launched without being enabled first.
 bool IsAppLaunchableWithoutEnabling(const ExtensionId& extension_id,
                                     content::BrowserContext* context);
+
+// Returns `true` if any currently installed extension was installed from the
+// webstore, otherwise false.
+bool AnyCurrentlyInstalledExtensionIsFromWebstore(
+    content::BrowserContext* context);
+
+// Returns true if this is an extension download. This also considers user
+// scripts to be extension downloads, since we convert those automatically.
+bool IsExtensionDownload(const download::DownloadItem& download_item);
+
+// Returns the last committed `GURL` of `rfh` for extension permission and
+// authorization checks. Returns an empty `GURL` if:
+// - `rfh` is null,
+// - `rfh` has an empty committed `GURL`, or
+// - `rfh` is displaying an error document.
+//
+// For tab-level or `content::WebContents`-level checks, pass the primary main
+// frame (e.g. `web_contents->GetPrimaryMainFrame()`).
+const GURL& GetURLForExtensionPermissionCheck(content::RenderFrameHost* rfh);
 
 }  // namespace util
 }  // namespace extensions

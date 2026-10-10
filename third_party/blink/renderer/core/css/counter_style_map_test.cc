@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/core/css/counter_style_map.h"
 
+#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
@@ -54,7 +55,7 @@ TEST_F(CounterStyleMapTest, ExtendsParentScopeStyle) {
     <div id=host></div>
   )HTML");
   ShadowRoot& shadow = AttachShadowTo("host");
-  shadow.setInnerHTML(
+  shadow.SetInnerHTMLWithoutTrustedTypes(
       "<style>@counter-style bar { system: extends foo; }</style>");
   UpdateAllLifecyclePhasesForTest();
 
@@ -176,7 +177,7 @@ TEST_F(CounterStyleMapTest, UpdateReferencesInChildScope) {
     <div id=host></div>
   )HTML");
   ShadowRoot& shadow = AttachShadowTo("host");
-  shadow.setInnerHTML(
+  shadow.SetInnerHTMLWithoutTrustedTypes(
       "<style>@counter-style bar { system: extends foo; }</style>");
   UpdateAllLifecyclePhasesForTest();
 

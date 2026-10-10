@@ -25,13 +25,17 @@ class Page;
 class CORE_EXPORT BrowserControls final
     : public GarbageCollected<BrowserControls> {
  public:
-  explicit BrowserControls(const Page&);
+  explicit BrowserControls(Page&);
 
   void Trace(Visitor*) const;
 
   // The height the top controls are hidden; used for viewport adjustments
   // while the controls are resizing.
   float UnreportedSizeAdjustment();
+  // The height the bottom controls are hidden; used for scroll bounds
+  // adjustments while the controls are resizing. Unlike the top adjustment,
+  // this never affects the visible rect.
+  float UnreportedBottomSizeAdjustment();
   // The amount that browser controls are currently shown.
   float ContentOffset();
   float BottomContentOffset();
@@ -61,11 +65,12 @@ class CORE_EXPORT BrowserControls final
   cc::BrowserControlsState PermittedState() const { return permitted_state_; }
 
  private:
+  void DidUpdateBrowserControls(bool update_safe_area_inset);
   void ResetBaseline();
   float TopMinShownRatio();
   float BottomMinShownRatio();
 
-  Member<const Page> page_;
+  Member<Page> page_;
 
   // The browser controls params such as heights, min-height etc.
   cc::BrowserControlsParams params_;

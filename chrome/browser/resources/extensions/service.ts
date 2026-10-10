@@ -39,6 +39,22 @@ export interface ServiceInterface extends ActivityLogDelegate,
   shouldIgnoreUpdate(
       extensionId: string,
       eventType: chrome.developerPrivate.EventType): boolean;
+  showSiteSettings(extensionId: string): void;
+  setProfileExtensionsPinnedByDefault(extensionsPinnedByDefault: boolean): void;
+}
+
+// Throws the `error` if it was anything other than the extension no longer
+// being in the system. The "no such extension found" error is always safe to
+// catch because the `ExtensionsManagerElement` will navigate away from an
+// extension specific page (e.g. DETAILS or ERRORS) back to the LIST page or
+// delete the extension's item on the LIST page when an extension is
+// uninstalled.
+function throwIfIsUnexpectedError(error: Error, functionName: string): void {
+  if (error?.message !==
+      `No such extension found for call to 'developerPrivate.${
+          functionName}'.`) {
+    throw error;
+  }
 }
 
 export class Service implements ServiceInterface {
@@ -74,15 +90,23 @@ export class Service implements ServiceInterface {
   }
 
   getExtensionSize(id: string) {
-    return chrome.developerPrivate.getExtensionSize(id);
+    return chrome.developerPrivate.getExtensionSize(id).catch(error => {
+      throwIfIsUnexpectedError(error, 'getExtensionSize');
+      return '';
+    });
   }
 
   addRuntimeHostPermission(id: string, host: string): Promise<void> {
-    return chrome.developerPrivate.addHostPermission(id, host);
+    return chrome.developerPrivate.addHostPermission(id, host).catch(error => {
+      throwIfIsUnexpectedError(error, 'addHostPermission');
+    });
   }
 
   removeRuntimeHostPermission(id: string, host: string): Promise<void> {
-    return chrome.developerPrivate.removeHostPermission(id, host);
+    return chrome.developerPrivate.removeHostPermission(id, host).catch(
+        error => {
+          throwIfIsUnexpectedError(error, 'removeHostPermission');
+        });
   }
 
   recordUserAction(metricName: string): void {
@@ -187,6 +211,16 @@ export class Service implements ServiceInterface {
     return chrome.management.uninstall(id, {showConfirmDialog: true});
   }
 
+  openReviewPage(id: string): Promise<void> {
+    return chrome.developerPrivate.openReviewPage(id).catch(
+        () => {
+            // Opening the review page can fail for benign reasons, such as the
+            // extension being uninstalled or review prompts being disabled by
+            // policy after the page was loaded. Ignore errors to avoid noisy
+            // crash logs.
+        });
+  }
+
   deleteItems(ids: string[]): Promise<void> {
     this.isDeleting_ = true;
     return chrome.developerPrivate.removeMultipleExtensions(ids).finally(() => {
@@ -194,10 +228,27 @@ export class Service implements ServiceInterface {
     });
   }
 
+  private updateExtensionConfiguration_(
+      config: chrome.developerPrivate.ExtensionConfigurationUpdate):
+      Promise<void> {
+    return chrome.developerPrivate.updateExtensionConfiguration(config).catch(
+        error => {
+          throwIfIsUnexpectedError(error, 'updateExtensionConfiguration');
+        });
+  }
+
+  private openDevTools_(
+      properties: chrome.developerPrivate.OpenDevToolsProperties):
+      Promise<void> {
+    return chrome.developerPrivate.openDevTools(properties).catch(error => {
+      throwIfIsUnexpectedError(error, 'openDevTools');
+    });
+  }
+
   setItemSafetyCheckWarningAcknowledged(
       id: string,
       reason: chrome.developerPrivate.SafetyCheckWarningReason): Promise<void> {
-    return chrome.developerPrivate.updateExtensionConfiguration({
+    return this.updateExtensionConfiguration_({
       extensionId: id,
       acknowledgeSafetyCheckWarningReason: reason,
     });
@@ -207,18 +258,31 @@ export class Service implements ServiceInterface {
     chrome.metricsPrivate.recordUserAction(
         isEnabled ? 'Extensions.ExtensionEnabled' :
                     'Extensions.ExtensionDisabled');
-    chrome.management.setEnabled(id, isEnabled);
+    return chrome.management.setEnabled(id, isEnabled)
+        .catch(
+            _ => {
+                // The `setEnabled` call can reasonably fail for a number of
+                // reasons, including that the user chose to deny a re-enable
+                // dialog. Silently ignore these errors.
+            });
   }
 
   setItemAllowedIncognito(id: string, isAllowedIncognito: boolean) {
-    chrome.developerPrivate.updateExtensionConfiguration({
+    this.updateExtensionConfiguration_({
       extensionId: id,
       incognitoAccess: isAllowedIncognito,
     });
   }
 
+  setItemAllowedUserScripts(id: string, isAllowedUserScripts: boolean) {
+    this.updateExtensionConfiguration_({
+      extensionId: id,
+      userScriptsAccess: isAllowedUserScripts,
+    });
+  }
+
   setItemAllowedOnFileUrls(id: string, isAllowedOnFileUrls: boolean) {
-    chrome.developerPrivate.updateExtensionConfiguration({
+    this.updateExtensionConfiguration_({
       extensionId: id,
       fileAccess: isAllowedOnFileUrls,
     });
@@ -226,21 +290,21 @@ export class Service implements ServiceInterface {
 
   setItemHostAccess(id: string, hostAccess: chrome.developerPrivate.HostAccess):
       void {
-    chrome.developerPrivate.updateExtensionConfiguration({
+    this.updateExtensionConfiguration_({
       extensionId: id,
       hostAccess: hostAccess,
     });
   }
 
   setItemCollectsErrors(id: string, collectsErrors: boolean): void {
-    chrome.developerPrivate.updateExtensionConfiguration({
+    this.updateExtensionConfiguration_({
       extensionId: id,
       errorCollection: collectsErrors,
     });
   }
 
   setItemPinnedToToolbar(id: string, pinnedToToolbar: boolean) {
-    chrome.developerPrivate.updateExtensionConfiguration({
+    this.updateExtensionConfiguration_({
       extensionId: id,
       pinnedToToolbar,
     });
@@ -248,13 +312,34 @@ export class Service implements ServiceInterface {
 
   inspectItemView(id: string, view: chrome.developerPrivate.ExtensionView):
       void {
-    chrome.developerPrivate.openDevTools({
+    this.openDevTools_({
       extensionId: id,
       renderProcessId: view.renderProcessId,
       renderViewId: view.renderViewId,
       incognito: view.incognito,
       isServiceWorker: view.type === 'EXTENSION_SERVICE_WORKER_BACKGROUND',
     });
+  }
+
+  openDevToolsForError(error: chrome.developerPrivate.RuntimeError): void {
+    const devToolsProperties: chrome.developerPrivate.OpenDevToolsProperties = {
+      extensionId: error.extensionId,
+      renderProcessId: error.renderProcessId,
+      renderViewId: error.renderViewId,
+      incognito: error.fromIncognito,
+      isServiceWorker: error.isServiceWorker,
+    };
+
+    // Get stack trace information if available to open the correct file and
+    // line.
+    const stackFrame = error.stackTrace && error.stackTrace[0];
+    if (stackFrame) {
+      devToolsProperties.url = stackFrame.url;
+      devToolsProperties.lineNumber = stackFrame.lineNumber;
+      devToolsProperties.columnNumber = stackFrame.columnNumber;
+    }
+
+    this.openDevTools_(devToolsProperties);
   }
 
   openUrl(url: string): void {
@@ -272,13 +357,29 @@ export class Service implements ServiceInterface {
   }
 
   repairItem(id: string): void {
-    chrome.developerPrivate.repairExtension(id);
+    chrome.developerPrivate.repairExtension(id).catch(
+        _ => {
+            // This can legitimately fail (e.g. if a reinstall is already
+            // in progress). Ignore the error to avoid crashing the browser,
+            // since WebUI errors are treated as crashes.
+        });
   }
 
   showItemOptionsPage(extension: chrome.developerPrivate.ExtensionInfo): void {
     assert(extension && extension.optionsPage);
-    if (extension.optionsPage!.openInTab) {
-      chrome.developerPrivate.showOptions(extension.id);
+    // We can't handle embedded options on android because guest_view is not
+    // supported.
+    // <if expr="is_android">
+    const openInTab = true;
+    // </if>
+    // <if expr="not is_android">
+    const openInTab = extension.optionsPage.openInTab;
+    // </if>
+
+    if (openInTab) {
+      chrome.developerPrivate.showOptions(extension.id).catch(error => {
+        throwIfIsUnexpectedError(error, 'showOptions');
+      });
     } else {
       navigation.navigateTo({
         page: Page.DETAILS,
@@ -331,14 +432,16 @@ export class Service implements ServiceInterface {
           chrome.metricsPrivate.recordUserAction('Options_UpdateExtensions');
           return new Promise<void>((resolve, reject) => {
             const loadLocalExtensions = async () => {
-              for (const extension of extensions) {
-                if (extension.location === 'UNPACKED') {
-                  try {
-                    await this.reloadItem(extension.id);
-                  } catch (loadError) {
-                    reject(loadError);
-                    break;
-                  }
+              const unpackedExtensions = extensions.filter(
+                  (ext) => ext.location ===
+                      chrome.developerPrivate.Location.UNPACKED);
+
+              for (const extension of unpackedExtensions) {
+                try {
+                  await this.reloadItem(extension.id);
+                } catch (loadError) {
+                  reject(loadError);
+                  break;
                 }
               }
               resolve();
@@ -360,11 +463,16 @@ export class Service implements ServiceInterface {
 
   requestFileSource(args: chrome.developerPrivate.RequestFileSourceProperties):
       Promise<chrome.developerPrivate.RequestFileSourceResponse> {
-    return chrome.developerPrivate.requestFileSource(args);
+    return chrome.developerPrivate.requestFileSource(args).catch(error => {
+      throwIfIsUnexpectedError(error, 'requestFileSource');
+      return null!;
+    });
   }
 
   showInFolder(id: string) {
-    chrome.developerPrivate.showPath(id);
+    chrome.developerPrivate.showPath(id).catch(error => {
+      throwIfIsUnexpectedError(error, 'showPath');
+    });
   }
 
   getExtensionActivityLog(extensionId: string):
@@ -513,8 +621,17 @@ export class Service implements ServiceInterface {
         {isMv2DeprecationNoticeDismissed: true});
   }
 
-  dismissMv2DeprecationNoticeForExtension(id: string): Promise<void> {
-    return chrome.developerPrivate.dismissMv2DeprecationNoticeForExtension(id);
+  uploadItemToAccount(id: string): Promise<boolean> {
+    return chrome.developerPrivate.uploadExtensionToAccount(id);
+  }
+
+  showSiteSettings(extensionId: string) {
+    chrome.developerPrivate.showSiteSettings(extensionId);
+  }
+
+  setProfileExtensionsPinnedByDefault(extensionsPinnedByDefault: boolean) {
+    chrome.developerPrivate.updateProfileConfiguration(
+        {extensionsPinnedByDefault});
   }
 
   static getInstance(): ServiceInterface {

@@ -3,8 +3,9 @@
 // found in the LICENSE file.
 
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_restrictions.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
-#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "content/public/test/browser_test.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_handler.h"
@@ -16,7 +17,7 @@ using SidePanelManifestBrowserTest = ExtensionBrowserTest;
 
 // Succeed when a file exists, when there is a query, or a bookmark.
 IN_PROC_BROWSER_TEST_F(SidePanelManifestBrowserTest, ValidateSuccess) {
-  // Load the extenesion and a real file for validation.
+  // Load the extension and a real file for validation.
   static constexpr char kManifest[] =
       R"({
         "name": "Test",

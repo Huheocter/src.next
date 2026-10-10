@@ -20,9 +20,7 @@ class PLATFORM_EXPORT ScopedRasterTimer {
  public:
   class Host;
   // raster_interface: pass null if rasterization is not gpu-accelerated
-  ScopedRasterTimer(gpu::raster::RasterInterface* raster_interface,
-                    Host& host,
-                    bool always_measure_for_testing);
+  ScopedRasterTimer(gpu::raster::RasterInterface* raster_interface, Host& host);
   ~ScopedRasterTimer();
 
   // Histogram names.
@@ -63,13 +61,13 @@ class PLATFORM_EXPORT ScopedRasterTimer {
  public:
   // Classes with methods that use ScopedRasterTimer must inherit
   // ScopedRasterTimer::Host
-  class Host {
+  class PLATFORM_EXPORT Host {
    public:
     void CheckGpuTimers(gpu::raster::RasterInterface* raster_interface);
     void AddGpuTimer(std::unique_ptr<AsyncGpuRasterTimer>);
 
    private:
-    WTF::Vector<std::unique_ptr<AsyncGpuRasterTimer>> gpu_timers_;
+    Vector<std::unique_ptr<AsyncGpuRasterTimer>> gpu_timers_;
   };
 
  private:

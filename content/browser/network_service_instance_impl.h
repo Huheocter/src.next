@@ -9,6 +9,7 @@
 
 #include "base/callback_list.h"
 #include "base/command_line.h"
+#include "base/files/file_path.h"
 #include "base/functional/callback.h"
 #include "content/common/content_export.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -16,12 +17,28 @@
 #include "services/network/public/mojom/cert_verifier_service_updater.mojom-forward.h"
 #include "services/network/public/mojom/network_context.mojom-forward.h"
 
+namespace net {
+enum class NetLogFileFormat;
+}  // namespace net
+
 namespace content {
+
+// A directory name that is created below the http cache path and passed to the
+// network context when creating a network context with cache enabled.
+// This must be a directory below the main cache path so operations such as
+// resetting the cache via HttpCacheParams.reset_cache can function correctly
+// as they rely on having access to the parent directory of the cache.
+inline constexpr base::FilePath::CharType kCacheDataDirectoryName[] =
+    FILE_PATH_LITERAL("Cache_Data");
 
 // Creates the network::NetworkService object on the IO thread directly instead
 // of trying to go through the ServiceManager.
 // This also calls ForceInProcessNetworkService().
 CONTENT_EXPORT void ForceCreateNetworkServiceDirectlyForTesting();
+
+// Sets whether or not the network service process will crash early in process
+// bootstrap, on the next launch, for testing.
+CONTENT_EXPORT void SetNetworkServiceCrashOnNextStartupImplForTesting();
 
 // Resets the interface ptr to the network service.
 CONTENT_EXPORT void ResetNetworkServiceForTesting();
@@ -74,6 +91,10 @@ GetCertVerifierParamsWithUpdater(
         cert_verifier_updater_remote);
 
 CONTENT_EXPORT uint64_t GetNetLogMaximumFileSizeFromCommandLineForTesting(
+    const base::CommandLine& command_line);
+
+CONTENT_EXPORT net::NetLogFileFormat
+GetNetLogFileFormatFromCommandLineForTesting(
     const base::CommandLine& command_line);
 }  // namespace content
 

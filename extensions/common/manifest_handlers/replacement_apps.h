@@ -25,10 +25,12 @@ struct ReplacementAppsInfo : public Extension::ManifestData {
 
   ~ReplacementAppsInfo() override;
 
-  // Returns true if the |extension| has a replacement web app.
+  static const char* kManifestDataKey;
+
+  // Returns true if the `extension` has a replacement web app.
   static bool HasReplacementWebApp(const Extension* extension);
 
-  // Returns the replacement web app for |extension|.
+  // Returns the replacement web app for `extension`.
   static GURL GetReplacementWebApp(const Extension* extension);
 
   bool Parse(const Extension* extension, std::u16string* error);

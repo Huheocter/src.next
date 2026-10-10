@@ -4,7 +4,9 @@
 
 #include "cc/input/scroll_snap_data.h"
 #include "third_party/blink/renderer/core/animation/animation_clock.h"
+#include "third_party/blink/renderer/core/dom/pseudo_element.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
+#include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/frame/visual_viewport.h"
 #include "third_party/blink/renderer/core/html/forms/html_select_element.h"
 #include "third_party/blink/renderer/core/html/html_iframe_element.h"
@@ -16,6 +18,9 @@
 #include "third_party/blink/renderer/core/svg_names.h"
 #include "third_party/blink/renderer/platform/graphics/compositing/paint_artifact_compositor.h"
 #include "third_party/blink/renderer/platform/graphics/paint/geometry_mapper.h"
+#include "third_party/skia/include/core/SkRRect.h"
+#include "ui/gfx/geometry/rrect_f.h"
+#include "ui/gfx/geometry/skia_conversions.h"
 
 namespace blink {
 
@@ -1645,7 +1650,7 @@ TEST_P(PaintPropertyTreeUpdateTest, ChangeDuringAnimation) {
   // Simulates starting a composite animation.
   builder.SetHasCurrentTransformAnimation(true);
   builder.SetIsRunningTransformAnimationOnCompositor(true);
-  target->SetStyle(builder.TakeStyle());
+  target->SetStyle(*builder.TakeStyle());
   EXPECT_TRUE(target->NeedsPaintPropertyUpdate());
   GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kStyleClean);
   UpdateAllLifecyclePhasesExceptPaint();
@@ -1675,7 +1680,7 @@ TEST_P(PaintPropertyTreeUpdateTest, ChangeDuringAnimation) {
   builder.SetTransform(transform);
   builder.SetTransformOrigin(
       TransformOrigin(Length::Fixed(70), Length::Fixed(30), 0));
-  target->SetStyle(builder.TakeStyle());
+  target->SetStyle(*builder.TakeStyle());
   EXPECT_TRUE(target->NeedsPaintPropertyUpdate());
   GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kStyleClean);
   {
@@ -1702,7 +1707,7 @@ TEST_P(PaintPropertyTreeUpdateTest, ChangeDuringAnimation) {
   GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kInStyleRecalc);
   builder = ComputedStyleBuilder(target->StyleRef());
   builder.SetBackfaceVisibility(EBackfaceVisibility::kHidden);
-  target->SetStyle(builder.TakeStyle());
+  target->SetStyle(*builder.TakeStyle());
   EXPECT_TRUE(target->NeedsPaintPropertyUpdate());
   GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kStyleClean);
   UpdateAllLifecyclePhasesExceptPaint();
@@ -1770,8 +1775,11 @@ TEST_P(PaintPropertyTreeUpdateTest, InlineFilterReferenceBoxChange) {
   const auto* properties = PaintPropertiesForElement("span");
   ASSERT_TRUE(properties);
   ASSERT_TRUE(properties->Filter());
+  ASSERT_TRUE(properties->Filter()->Filter());
   EXPECT_EQ(gfx::PointF(0, 20),
-            properties->Filter()->Filter().ReferenceBox().origin());
+            properties->Filter()->Filter()->ReferenceBox().origin());
+  EXPECT_EQ(gfx::Point(-3, 17),
+            properties->Filter()->FilterOutputBounds().origin());
 
   GetDocument()
       .getElementById(AtomicString("spacer"))
@@ -1780,7 +1788,9 @@ TEST_P(PaintPropertyTreeUpdateTest, InlineFilterReferenceBoxChange) {
   UpdateAllLifecyclePhasesForTest();
   ASSERT_EQ(properties, PaintPropertiesForElement("span"));
   EXPECT_EQ(gfx::PointF(0, 100),
-            properties->Filter()->Filter().ReferenceBox().origin());
+            properties->Filter()->Filter()->ReferenceBox().origin());
+  EXPECT_EQ(gfx::Point(-3, 97),
+            properties->Filter()->FilterOutputBounds().origin());
 }
 
 TEST_P(PaintPropertyTreeUpdateTest, StartSVGAnimation) {
@@ -2003,7 +2013,8 @@ TEST_P(PaintPropertyTreeUpdateTest, ChangeMaskOutputClip) {
   SetBodyInnerHTML(R"HTML(
     <div id="container" style="width: 100px; height: 10px; overflow: hidden">
       <div id="masked"
-           style="height: 100px; background: red; -webkit-mask: url()"></div>
+           style="height: 100px; background: red;
+                  -webkit-mask: linear-gradient(red, blue)"></div>
     </div>
   )HTML");
 
@@ -2119,15 +2130,16 @@ TEST_P(PaintPropertyTreeUpdateTest, BackdropFilterBounds) {
   auto* properties = PaintPropertiesForElement("target");
   ASSERT_TRUE(properties);
   ASSERT_TRUE(properties->Effect());
-  EXPECT_EQ(gfx::RRectF(0, 0, 100, 100, 0),
-            properties->Effect()->BackdropFilterBounds());
+  SkRect bounds;
+  EXPECT_TRUE(properties->Effect()->BackdropFilterBounds().isRect(&bounds));
+  EXPECT_EQ(SkRect::MakeXYWH(0, 0, 100, 100), bounds);
 
   GetDocument()
       .getElementById(AtomicString("target"))
       ->SetInlineStyleProperty(CSSPropertyID::kWidth, "200px");
   UpdateAllLifecyclePhasesForTest();
-  EXPECT_EQ(gfx::RRectF(0, 0, 200, 100, 0),
-            properties->Effect()->BackdropFilterBounds());
+  EXPECT_TRUE(properties->Effect()->BackdropFilterBounds().isRect(&bounds));
+  EXPECT_EQ(SkRect::MakeXYWH(0, 0, 200, 100), bounds);
 }
 
 TEST_P(PaintPropertyTreeUpdateTest, UpdatesInLockedDisplayHandledCorrectly) {
@@ -2174,7 +2186,7 @@ TEST_P(PaintPropertyTreeUpdateTest, AnchorPositioningScrollUpdate) {
   // Make sure the scrolling coordinator is active.
   ASSERT_TRUE(GetFrame().GetPage()->GetScrollingCoordinator());
 
-  GetFrame().DomWindow()->scrollBy(0, 300);
+  GetFrame().DomWindow()->scrollByForTesting(0, 300);
 
   // Snapshotted scroll offset update requires animation frame.
   SimulateFrame();
@@ -2189,6 +2201,35 @@ TEST_P(PaintPropertyTreeUpdateTest, AnchorPositioningScrollUpdate) {
   // Anchor positioning scroll update should not require main thread commits.
   EXPECT_EQ(GetFrame().View()->GetPaintArtifactCompositor()->NeedsUpdate(),
             PaintArtifactCompositor::UpdateType::kNone);
+}
+
+TEST_P(PaintPropertyTreeUpdateTest, NeedsEffectFor2DScaleTransformChange) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      #target {
+        width: 100px;
+        height: 100px;
+        transform: scale(2);
+        opacity: 0.5;
+      }
+    </style>
+    <div id='target'></div>
+  )HTML");
+
+  auto* target = GetLayoutObjectByElementId("target");
+  const auto* properties = target->FirstFragment().PaintProperties();
+  EXPECT_TRUE(properties->Effect()->NeedsEffectFor2DScaleTransform());
+
+  // Change transform to a non-2d-scale transform.
+  GetDocument()
+      .getElementById(AtomicString("target"))
+      ->setAttribute(html_names::kStyleAttr,
+                     AtomicString("transform: translate(10px); opacity: 0.5"));
+  UpdateAllLifecyclePhasesForTest();
+
+  // The effect node should still exist (due to opacity), but
+  // NeedsEffectFor2DScaleTransform should be false.
+  EXPECT_FALSE(properties->Effect()->NeedsEffectFor2DScaleTransform());
 }
 
 TEST_P(PaintPropertyTreeUpdateTest, ElementCaptureUpdate) {
@@ -2264,6 +2305,212 @@ TEST_P(PaintPropertyTreeUpdateTest, ElementCaptureUpdate) {
   paint_properties =
       element->GetLayoutObject()->FirstFragment().PaintProperties();
   EXPECT_TRUE(paint_properties && paint_properties->ElementCaptureEffect());
+}
+
+TEST_P(PaintPropertyTreeUpdateTest, RestrictionTargetIdChange) {
+  // Create an initial state.
+  EffectPaintPropertyNode::State state;
+  state.local_transform_space = &TransformPaintPropertyNode::Root();
+  state.output_clip = &ClipPaintPropertyNode::Root();
+  state.restriction_target_id =
+      RestrictionTargetId(base::Token::CreateRandom());
+
+  auto* node = EffectPaintPropertyNode::Create(EffectPaintPropertyNode::Root(),
+                                               std::move(state));
+
+  // Update with a new state having different restriction_target_id.
+  EffectPaintPropertyNode::State new_state;
+  new_state.local_transform_space = &TransformPaintPropertyNode::Root();
+  new_state.output_clip = &ClipPaintPropertyNode::Root();
+  new_state.restriction_target_id =
+      RestrictionTargetId(base::Token::CreateRandom());
+
+  auto change =
+      node->Update(EffectPaintPropertyNode::Root(), std::move(new_state));
+
+  EXPECT_EQ(PaintPropertyChangeType::kChangedOnlyValues, change);
+}
+
+TEST_P(PaintPropertyTreeUpdateTest, FixedPositionChangeCompositingReason) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      body { margin: 0; height: 1000px; }
+      #target { position: fixed; width: 100px; height: 100px; }
+    </style>
+    <div id="target" style="top: 100px; left: 0"></div>
+  )HTML");
+
+  auto* translation =
+      PaintPropertiesForElement("target")->PaintOffsetTranslation();
+  EXPECT_EQ(gfx::Vector2dF(0, 100), translation->Matrix().To2dTranslation());
+  EXPECT_FALSE(translation->IsAffectedByOuterViewportBoundsDelta());
+
+  // Change target to attach to the bottom of viewport.
+  // The bottom value is chosen to keep the initial location unchanged.
+  GetDocument()
+      .getElementById(AtomicString("target"))
+      ->setAttribute(html_names::kStyleAttr,
+                     AtomicString("bottom: 400px; left: 0"));
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_EQ(gfx::Vector2dF(0, 100), translation->Matrix().To2dTranslation());
+  EXPECT_TRUE(translation->IsAffectedByOuterViewportBoundsDelta());
+
+  // Change target back to top-anchored; should no longer be affected.
+  GetDocument()
+      .getElementById(AtomicString("target"))
+      ->setAttribute(html_names::kStyleAttr,
+                     AtomicString("top: 100px; left: 0"));
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(translation->IsAffectedByOuterViewportBoundsDelta());
+
+  // Change target to use bottom relative to safe area inset.
+  // This is also affected by outer viewport bounds delta since safe area
+  // insets change when the browser UI (e.g. address bar) resizes.
+  GetDocument()
+      .getElementById(AtomicString("target"))
+      ->setAttribute(
+          html_names::kStyleAttr,
+          AtomicString("bottom: env(safe-area-inset-bottom); left: 0"));
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_TRUE(translation->IsAffectedByOuterViewportBoundsDelta());
+
+  // Change target back to top-anchored; should no longer be affected.
+  GetDocument()
+      .getElementById(AtomicString("target"))
+      ->setAttribute(html_names::kStyleAttr,
+                     AtomicString("top: 100px; left: 0"));
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(translation->IsAffectedByOuterViewportBoundsDelta());
+}
+
+TEST_P(PaintPropertyTreeUpdateTest, CanvasSubtreePseudoElementFilter) {
+  ScopedCanvasDrawElementForTest forced_canvas_draw_element_feature(true);
+  GetDocument().GetSettings()->SetScriptEnabled(true);
+
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      canvas { width: 200px; height: 200px; }
+      #target::before {
+        content: 'FAIL';
+        filter: drop-shadow(0px 0px 0px rgba(0,0,0,0));
+      }
+    </style>
+    <canvas id="canvas" layoutsubtree>
+      <div id="target"></div>
+    </canvas>
+  )HTML");
+
+  Element* target = GetDocument().getElementById(AtomicString("target"));
+  PseudoElement* before = target->GetPseudoElement(kPseudoIdBefore);
+  LayoutObject* before_layout = before->GetLayoutObject();
+  const auto* properties = before_layout->FirstFragment().PaintProperties();
+
+  // Initially, the pseudo-element is inside the layoutsubtree canvas,
+  // so its filter effect node should have is_in_canvas_subtree set to true.
+  const auto* filter_effect = properties->Filter();
+  EXPECT_TRUE(filter_effect->IsInDrawableCanvasSubtree());
+
+  // Now, dynamically move the target out of the canvas.
+  GetDocument().body()->appendChild(target);
+  UpdateAllLifecyclePhasesForTest();
+
+  // The filter effect node should now have is_in_canvas_subtree set to false.
+  before = target->GetPseudoElement(kPseudoIdBefore);
+  before_layout = before->GetLayoutObject();
+  properties = before_layout->FirstFragment().PaintProperties();
+  filter_effect = properties->Filter();
+  EXPECT_FALSE(filter_effect->IsInDrawableCanvasSubtree());
+}
+
+TEST_P(PaintPropertyTreeUpdateTest, CanvasScriptsDisabled) {
+  ScopedCanvasDrawElementForTest forced_canvas_draw_element_feature(true);
+  GetDocument().GetSettings()->SetScriptEnabled(false);
+
+  SetBodyInnerHTML(R"HTML(
+    <canvas layoutsubtree style="display: inline;">
+      <div id="target">Hello</div>
+    </canvas>
+  )HTML");
+  UpdateAllLifecyclePhasesForTest();
+  // Pass if no crash.
+}
+
+TEST_P(PaintPropertyTreeUpdateTest, CanvasSubtreeScrollbarInIframe) {
+  ScopedCanvasDrawElementForTest forced_canvas_draw_element_feature(true);
+  GetDocument().GetSettings()->SetScriptEnabled(true);
+
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      canvas, iframe {
+        width: 200px;
+        height: 200px;
+      }
+    </style>
+    <canvas id="canvas" layoutsubtree></canvas>
+    <iframe id="iframe"></iframe>
+  )HTML");
+  SetChildFrameHTML(R"HTML(
+    <style>
+      #scroll {
+        width: 100px;
+        height: 100px;
+        overflow: scroll;
+      }
+      .tall { height: 500px; }
+    </style>
+    <div id="scroll">
+      <div class="tall"></div>
+    </div>
+    <div class="tall"></div>
+  )HTML");
+  UpdateAllLifecyclePhasesForTest();
+
+  auto* iframe = To<HTMLIFrameElement>(
+      GetDocument().getElementById(AtomicString("iframe")));
+  auto* canvas = GetDocument().getElementById(AtomicString("canvas"));
+  auto* child_layout_view = ChildDocument().GetLayoutView();
+  auto* child_scroll =
+      ChildDocument().getElementById(AtomicString("scroll"))->GetLayoutObject();
+
+  auto check_scrollbar_items = [&](bool expected_composited) {
+    int scrollbar_count = 0;
+    for (const auto& item :
+         GetDocument().View()->GetPaintArtifact().GetDisplayItemList()) {
+      if (const auto* scrollbar = DynamicTo<ScrollbarDisplayItem>(&item)) {
+        EXPECT_EQ(expected_composited, !!scrollbar->ScrollTranslation());
+        scrollbar_count++;
+      }
+    }
+    EXPECT_EQ(2, scrollbar_count);
+  };
+  auto check_scrollbar_effect_in_canvas_subtree =
+      [&](const LayoutObject* object, bool expected_in_canvas_subtree) {
+        EXPECT_EQ(expected_in_canvas_subtree,
+                  object->FirstFragment()
+                      .PaintProperties()
+                      ->VerticalScrollbarEffect()
+                      ->IsInDrawableCanvasSubtree());
+      };
+
+  // Outside canvas, scrollbar is composited.
+  check_scrollbar_items(true);
+  check_scrollbar_effect_in_canvas_subtree(child_layout_view, false);
+  check_scrollbar_effect_in_canvas_subtree(child_scroll, false);
+
+  const auto* v_scrollbar_effect = child_layout_view->FirstFragment()
+                                       .PaintProperties()
+                                       ->VerticalScrollbarEffect();
+  EXPECT_FALSE(v_scrollbar_effect->IsInDrawableCanvasSubtree());
+
+  // Move the iframe into the canvas subtree.
+  canvas->moveBefore(iframe, nullptr, ASSERT_NO_EXCEPTION);
+  UpdateAllLifecyclePhasesForTest();
+
+  // Inside canvas, composited scrollbars are disabled; the scrollbar must be
+  // repainted without a scroll translation.
+  check_scrollbar_items(false);
+  check_scrollbar_effect_in_canvas_subtree(child_layout_view, true);
+  check_scrollbar_effect_in_canvas_subtree(child_scroll, true);
 }
 
 }  // namespace blink

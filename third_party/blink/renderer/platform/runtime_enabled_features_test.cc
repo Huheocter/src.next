@@ -4,6 +4,10 @@
 
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
+#include <cstdlib>
+
+#include "base/memory/protected_memory_buildflags.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/web_runtime_features.h"
@@ -537,5 +541,67 @@ INSTANTIATE_TYPED_TEST_SUITE_P(Base,
 INSTANTIATE_TYPED_TEST_SUITE_P(Protected,
                                AbstractRuntimeEnabledFeaturesTest,
                                RuntimeProtectedEnabledFeaturesTestTraits);
+
+TEST(RuntimeEnabledFeaturesTest, FocusgroupV2CanBeToggled) {
+  ScopedFocusgroupV2ForTest v2_disabled(false);
+  EXPECT_FALSE(RuntimeEnabledFeatures::FocusgroupV2Enabled());
+
+  {
+    ScopedFocusgroupV2ForTest v2_enabled(true);
+    EXPECT_TRUE(RuntimeEnabledFeatures::FocusgroupV2Enabled());
+  }
+
+  EXPECT_FALSE(RuntimeEnabledFeatures::FocusgroupV2Enabled());
+}
+
+TEST(RuntimeEnabledFeaturesTest, FocusgroupV2DependsOnFocusgroup) {
+  ScopedFocusgroupForTest focusgroup_disabled(false);
+  ScopedFocusgroupV2ForTest v2_disabled(false);
+  EXPECT_FALSE(RuntimeEnabledFeatures::FocusgroupEnabled());
+  EXPECT_FALSE(RuntimeEnabledFeatures::FocusgroupV2Enabled());
+
+  {
+    ScopedFocusgroupV2ForTest v2_enabled(true);
+    EXPECT_FALSE(RuntimeEnabledFeatures::FocusgroupV2Enabled());
+  }
+
+  {
+    ScopedFocusgroupForTest focusgroup_enabled(true);
+    ScopedFocusgroupV2ForTest v2_enabled(true);
+    EXPECT_TRUE(RuntimeEnabledFeatures::FocusgroupEnabled());
+    EXPECT_TRUE(RuntimeEnabledFeatures::FocusgroupV2Enabled());
+  }
+
+  EXPECT_FALSE(RuntimeEnabledFeatures::FocusgroupEnabled());
+  EXPECT_FALSE(RuntimeEnabledFeatures::FocusgroupV2Enabled());
+}
+
+#if BUILDFLAG(PROTECTED_MEMORY_ENABLED) && defined(GTEST_HAS_DEATH_TEST) && \
+    !BUILDFLAG(IS_ANDROID)
+// All protected runtime feature flags are stored in a single read-only
+// section and must be initialized together. This ensures that once any
+// protected flag has been read, querying a different protected flag never
+// requires write access to the section. The scoped helper below dereferences
+// the raw protected storage of the dependent flag without going through its
+// getter, which CHECKs if the flag has not been constructed. Uses "DeathTest"
+// idiom for subprocess test-state isolation.
+TEST(RuntimeEnabledFeaturesProtectedDeathTest,
+     ProtectedFlagsShareInitialization) {
+  //
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  // Exit 0 is expected because the DeathTest is used purely for subprocess
+  // test-state isolation.
+  EXPECT_EXIT(
+      {
+        // Reading one protected flag must initialize every protected flag.
+        RuntimeEnabledFeatures::TestFeatureProtectedEnabled();
+        // Direct access to a different flag's storage must now succeed.
+        ScopedTestFeatureProtectedDependentForTest scoped(false);
+        ::_Exit(0);
+      },
+      testing::ExitedWithCode(0), "");
+}
+#endif  // BUILDFLAG(PROTECTED_MEMORY_ENABLED) && defined(GTEST_HAS_DEATH_TEST)
+        // && !BUILDFLAG(IS_ANDROID)
 
 }  // namespace blink

@@ -17,14 +17,14 @@
 #include "content/browser/child_process_launcher_helper_posix.h"
 #include "content/browser/child_process_task_port_provider_mac.h"
 #include "content/browser/sandbox_parameters_mac.h"
+#include "content/browser/sandboxed_process_launcher_delegate.h"
 #include "content/grit/content_resources.h"
 #include "content/public/browser/child_process_launcher_utils.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/result_codes.h"
-#include "content/public/common/sandboxed_process_launcher_delegate.h"
-#include "sandbox/mac/sandbox_compiler.h"
+#include "sandbox/mac/sandbox_serializer.h"
 #include "sandbox/mac/seatbelt_exec.h"
 #include "sandbox/policy/features.h"
 #include "sandbox/policy/mac/sandbox_mac.h"
@@ -37,7 +37,7 @@ namespace internal {
 
 namespace {
 
-// Class that holds a map of SandboxTypes to compiled policy protos. Only
+// Class that holds a map of SandboxTypes to serialized policy strings. Only
 // certain sandbox types can be cached, depending on the nature of the
 // runtime parameters that are bound into the profile.
 class SandboxProfileCache {
@@ -50,8 +50,7 @@ class SandboxProfileCache {
     return *cache;
   }
 
-  const sandbox::mac::SandboxPolicy* Query(
-      sandbox::mojom::Sandbox sandbox_type) {
+  const std::string* Query(sandbox::mojom::Sandbox sandbox_type) {
     base::AutoLock lock(lock_);
     auto it = cache_.find(sandbox_type);
     if (it == cache_.end())
@@ -59,34 +58,34 @@ class SandboxProfileCache {
     return &it->second;
   }
 
-  void Insert(sandbox::mojom::Sandbox sandbox_type,
-              const sandbox::mac::SandboxPolicy& policy) {
-    DCHECK(sandbox::policy::CanCacheSandboxPolicy(sandbox_type));
+  void Insert(sandbox::mojom::Sandbox sandbox_type, const std::string& policy) {
+    CHECK(sandbox::policy::CanCacheSandboxPolicy(sandbox_type),
+          base::NotFatalUntil::M159);
     base::AutoLock lock(lock_);
     cache_.emplace(sandbox_type, policy);
   }
 
  private:
   base::Lock lock_;
-  base::flat_map<sandbox::mojom::Sandbox, sandbox::mac::SandboxPolicy> cache_
-      GUARDED_BY(lock_);
+  base::flat_map<sandbox::mojom::Sandbox, std::string> cache_ GUARDED_BY(lock_);
 };
 
 }  // namespace
 
 std::optional<mojo::NamedPlatformChannel>
 ChildProcessLauncherHelper::CreateNamedPlatformChannelOnLauncherThread() {
-  DCHECK(CurrentlyOnProcessLauncherTaskRunner());
+  CHECK(CurrentlyOnProcessLauncherTaskRunner(), base::NotFatalUntil::M159);
   return std::nullopt;
 }
 
 void ChildProcessLauncherHelper::BeforeLaunchOnClientThread() {
-  DCHECK(client_task_runner_->RunsTasksInCurrentSequence());
+  CHECK(client_task_runner_->RunsTasksInCurrentSequence(),
+        base::NotFatalUntil::M159);
 }
 
 std::unique_ptr<PosixFileDescriptorInfo>
 ChildProcessLauncherHelper::GetFilesToMap() {
-  DCHECK(CurrentlyOnProcessLauncherTaskRunner());
+  CHECK(CurrentlyOnProcessLauncherTaskRunner(), base::NotFatalUntil::M159);
   return CreateDefaultPosixFilesToMap(
       child_process_id(), mojo_channel_->remote_endpoint(),
       /*files_to_preload=*/{}, GetProcessType(), command_line());
@@ -105,7 +104,7 @@ bool ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
 
   mojo::PlatformHandle endpoint =
       mojo_channel_->TakeRemoteEndpoint().TakePlatformHandle();
-  DCHECK(endpoint.is_valid_mach_receive());
+  CHECK(endpoint.is_valid_mach_receive(), base::NotFatalUntil::M159);
   options->mach_ports_for_rendezvous.insert(std::make_pair(
       'mojo', base::MachRendezvousPort(endpoint.TakeMachReceiveRight())));
 
@@ -131,17 +130,18 @@ bool ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
           std::make_pair("OS_ACTIVITY_MODE", "disable"));
     }
 
-    const auto* cached_policy = SandboxProfileCache::Get().Query(sandbox_type);
+    const std::string* cached_policy =
+        SandboxProfileCache::Get().Query(sandbox_type);
     if (cached_policy) {
-      policy_ = *cached_policy;
+      serialized_policy_ = *cached_policy;
     } else {
       const bool can_cache_policy =
           sandbox::policy::CanCacheSandboxPolicy(sandbox_type);
 
       // Generate the sandbox policy profile.
-      sandbox::SandboxCompiler compiler(
-          can_cache_policy ? sandbox::SandboxCompiler::Target::kCompiled
-                           : sandbox::SandboxCompiler::Target::kSource);
+      sandbox::SandboxSerializer compiler(
+          can_cache_policy ? sandbox::SandboxSerializer::Target::kCompiled
+                           : sandbox::SandboxSerializer::Target::kSource);
       compiler.SetProfile(sandbox::policy::GetSandboxProfile(sandbox_type));
       const bool sandbox_ok =
           SetupSandboxParameters(sandbox_type, *command_line_.get(), &compiler);
@@ -152,13 +152,13 @@ bool ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
       }
 
       std::string error;
-      if (!compiler.CompilePolicyToProto(policy_, error)) {
+      if (!compiler.SerializePolicy(serialized_policy_, error)) {
         LOG(ERROR) << "Failed to compile sandbox policy: " << error;
         return false;
       }
 
       if (can_cache_policy) {
-        SandboxProfileCache::Get().Insert(sandbox_type, policy_);
+        SandboxProfileCache::Get().Insert(sandbox_type, serialized_policy_);
       }
     }
 
@@ -200,7 +200,7 @@ void ChildProcessLauncherHelper::AfterLaunchOnLauncherThread(
   // Send the sandbox profile after launch so that the child will exist and be
   // waiting for the message on its side of the pipe.
   if (process.process.IsValid() && seatbelt_exec_client_.get() != nullptr) {
-    seatbelt_exec_client_->SendPolicy(policy_);
+    seatbelt_exec_client_->SendPolicy(serialized_policy_);
   }
 }
 
@@ -226,7 +226,7 @@ bool ChildProcessLauncherHelper::TerminateProcess(const base::Process& process,
 // static
 void ChildProcessLauncherHelper::ForceNormalProcessTerminationSync(
     ChildProcessLauncherHelper::Process process) {
-  DCHECK(CurrentlyOnProcessLauncherTaskRunner());
+  CHECK(CurrentlyOnProcessLauncherTaskRunner(), base::NotFatalUntil::M159);
   // Client has gone away, so just kill the process.  Using exit code 0 means
   // that UMA won't treat this as a crash.
   process.process.Terminate(RESULT_CODE_NORMAL_EXIT, false);

@@ -25,10 +25,10 @@ export function getHtml(this: ItemElement) {
           <div class="source-icon-wrapper" role="img"
               aria-describedby="a11yAssociation"
               aria-label="${this.computeSourceIndicatorText_()}">
-            <cr-icon .icon="${this.computeSourceIndicatorIcon_()}">
-            </cr-icon>
+            <cr-icon .icon="${this.computeSourceIndicatorIcon_()}"></cr-icon>
           </div>
-        </div>` : ''}
+        </div>
+      ` : ''}
     </div>
 
     <!-- This needs to be separate from the source-indicator since it can't
@@ -37,7 +37,8 @@ export function getHtml(this: ItemElement) {
       <cr-tooltip id="source-indicator-text" for="source-indicator"
           position="top" fit-to-visible-bounds aria-hidden="true">
         ${this.computeSourceIndicatorText_()}
-      </cr-tooltip>` : ''}
+      </cr-tooltip>
+    ` : ''}
     <div id="content">
       <!--Note: We wrap inspect-views in a div so that the outer div
           doesn't shrink (because it's not display: flex).-->
@@ -59,7 +60,7 @@ export function getHtml(this: ItemElement) {
       </div>
       ${this.showSevereWarnings() ? html`
         <div id="warnings">
-          <cr-icon class="message-icon" icon="cr:error-outline"></cr-icon>
+          <cr-icon class="message-icon" icon="cr:error"></cr-icon>
           <span id="runtime-warnings" class="cr-secondary-text"
               aria-describedby="a11yAssociation"
               ?hidden="${!this.data.runtimeWarnings.length}">
@@ -82,19 +83,34 @@ export function getHtml(this: ItemElement) {
           <span id="blocklisted-warning" class="cr-secondary-text"><!--
             -->${this.data.blocklistText}<!-- No whitespace; use :empty in css.
        --></span>
-        </div>` : ''}
+          <span id="unsupported-developer-extension-warning"
+              class="cr-secondary-text" ?hidden="${
+                  !this.data.disableReasons.unsupportedDeveloperExtension}">
+            $i18n{itemUnsupportedDeveloperMode}
+          </span>
+          <span id="disabled-by-another-extension-warning"
+              class="cr-secondary-text"
+              ?hidden="${!this.isDisabledByAnotherExtension_()}">
+            ${this.getDisabledByExtensionWarningText_()}
+          </span>
+        </div>
+      ` : ''}
       ${this.showMv2DeprecationWarning_() ? html`
         <div id="warnings">
-          <cr-icon class="message-icon" icon="cr:error-outline"></cr-icon>
+          <cr-icon class="message-icon" icon="cr:error"></cr-icon>
           <span id="mv2-deprecation-warning" class="cr-secondary-text"
               aria-describedby="a11yAssociation">
             $i18n{mv2DeprecationUnsupportedExtensionOffText}
           </span>
-        </div>` : ''}
+        </div>
+      ` : ''}
       ${this.showAllowlistWarning_() ? html`
         <div id="allowlist-warning">
           <cr-icon class="message-icon"
-              icon="extensions-icons:safebrowsing_warning">
+              icon="${
+                  this.webuiRoundedIconsEnabled_ ?
+                      'extensions-icons:android-security-privacy-alert' :
+                      'extensions-icons:safebrowsing_warning-old'}">
           </cr-icon>
           <span class="cr-secondary-text" aria-describedby="a11yAssociation">
             $i18n{itemAllowlistWarning}
@@ -103,7 +119,8 @@ export function getHtml(this: ItemElement) {
               $i18n{learnMore}
             </a>
           </span>
-        </div>` : ''}
+        </div>
+      ` : ''}
       ${this.inDevMode ? html`
         <div id="extension-id" class="bounded-text cr-secondary-text">
           ${this.getIdElementText_()}
@@ -123,10 +140,21 @@ export function getHtml(this: ItemElement) {
               </a>
               <a is="action-link" ?hidden="${this.computeExtraViewsHidden_()}"
                   @click="${this.onExtraInspectClick_}">
-                &nbsp;${this.computeExtraInspectLabel_()}
+                 ${this.computeExtraInspectLabel_()}
               </a>
             </div>
-          </div>` : ''}` : ''}
+          </div>
+        ` : ''}
+      ` : ''}
+      <div id="rate-link-container"
+          ?hidden="${!this.showOpenReviewPageLink_()}">
+        <a id="rate-link" is="action-link"
+            @click="${this.onOpenReviewPageClick_}"
+            aria-describedby="a11yAssociation">
+          $i18n{itemRateExtension}
+          <cr-icon icon="cr:open-in-new"></cr-icon>
+        </a>
+      </div>
     </div>
   </div>
   <div id="button-strip" class="layout-horizontal-center cr-secondary-text">
@@ -141,40 +169,52 @@ export function getHtml(this: ItemElement) {
         $i18n{remove}
       </cr-button>
       ${this.shouldShowErrorsButton_() ? html`
-        <cr-button id="errors-button" @click="${this.onErrorsClick_}"
-            aria-describedby="a11yAssociation">
-          $i18n{itemErrors}
-        </cr-button>` : ''}
+        <cr-button id="errors-button"
+            class="${
+                this.showErrorsAsWarningsButtonLabel_() ? 'warning' : 'error'}"
+            @click="${this.onErrorsClick_}" aria-describedby="a11yAssociation">
+          ${this.showErrorsAsWarningsButtonLabel_() ? '$i18n{itemWarnings}' :
+                                                    '$i18n{itemErrors}'}
+        </cr-button>
+      ` : ''}
     </div>
-    ${!this.computeDevReloadButtonHidden_() ? html`
+    ${this.showAccountUploadButton_() ? html`
+      <cr-icon-button id="account-upload-button" class="no-overlap"
+          title="$i18n{itemUpload}" aria-label="$i18n{itemUpload}" iron-icon="${
+              this.webuiRoundedIconsEnabled_ ?
+                  'extensions-icons:cloud-upload' :
+                  'extensions-icons:extension_cloud_upload-old'}"
+          aria-describedby="a11yAssociation" @click="${this.onUploadClick_}">
+      </cr-icon-button>
+    ` : ''}
+    ${this.showDevReloadButton_() ? html`
       <cr-icon-button id="dev-reload-button" class="icon-refresh no-overlap"
           title="$i18n{itemReload}" aria-label="$i18n{itemReload}"
           aria-describedby="a11yAssociation" @click="${this.onReloadClick_}">
-      </cr-icon-button>` : ''}
+      </cr-icon-button>
+    ` : ''}
     ${this.showRepairButton_() ? html`
       <cr-button id="repair-button" class="action-button"
           aria-describedby="a11yAssociation" @click="${this.onRepairClick_}">
         $i18n{itemRepair}
-      </cr-button>` : ''}
+      </cr-button>
+    ` : ''}
     ${this.showReloadButton_() ? html`
       <cr-button id="terminated-reload-button" @click="${this.onReloadClick_}"
           aria-describedby="a11yAssociation" class="action-button">
         $i18n{itemReload}
-      </cr-button>` : ''}
+      </cr-button>
+    ` : ''}
     <cr-tooltip-icon id="parentDisabledPermissionsToolTip"
         ?hidden="${!this.data.disableReasons.parentDisabledPermissions}"
         tooltip-text="$i18n{parentDisabledPermissions}"
-        icon-class="cr20:kite"
+        icon-class="cr20:family-link"
         icon-aria-label="$i18n{parentDisabledPermissions}">
     </cr-tooltip-icon>
-    <cr-tooltip id="enable-toggle-tooltip" for="enableToggle" position="left"
-        aria-hidden="true" animation-delay="0" fit-to-visible-bounds>
-      ${this.getEnableToggleTooltipText_()}
-    </cr-tooltip>
     <cr-toggle id="enableToggle"
         aria-label="${this.getEnableToggleAriaLabel_()}"
-        aria-describedby="a11yAssociation enable-toggle-tooltip"
-        ?checked="${this.isEnabled_()}" @change="${this.onEnableToggleChange_}"
+        aria-describedby="a11yAssociation" ?checked="${this.isEnabled_()}"
+        @change="${this.onEnableToggleChange_}"
         ?disabled="${!this.isEnableToggleEnabled_()}"
         ?hidden="${!this.showEnableToggle_()}">
     </cr-toggle>

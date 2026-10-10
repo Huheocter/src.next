@@ -20,6 +20,8 @@ namespace extensions {
 // that may be specified in the manifest of an extension using
 // "web_accessible_resources" key.
 struct WebAccessibleResourcesInfo : public Extension::ManifestData {
+  static const char* kManifestDataKey;
+
   // Define out of line constructor/destructor to please Clang.
   WebAccessibleResourcesInfo();
   ~WebAccessibleResourcesInfo() override;
@@ -44,7 +46,7 @@ struct WebAccessibleResourcesInfo : public Extension::ManifestData {
     // List of extension ids allowed to access resources.
     base::flat_set<ExtensionId> extension_ids;
 
-    // Optionally true to require dynamic urls from sites not in |matches|.
+    // Optionally true to require dynamic urls from sites not in `matches`.
     bool use_dynamic_url;
 
     // True if "*" is defined as an extension id in the manifest.

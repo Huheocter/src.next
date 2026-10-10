@@ -4,8 +4,9 @@
 
 #include "third_party/blink/renderer/core/css/css_numeric_literal_value.h"
 
-#include "build/build_config.h"
+#include "third_party/abseil-cpp/absl/strings/str_format.h"
 #include "third_party/blink/renderer/core/css/css_length_resolver.h"
+#include "third_party/blink/renderer/core/css/css_value_clamping_utils.h"
 #include "third_party/blink/renderer/core/css/css_value_pool.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 #include "third_party/blink/renderer/platform/wtf/size_assertions.h"
@@ -139,13 +140,17 @@ int CSSNumericLiteralValue::ComputeInteger() const {
 }
 
 double CSSNumericLiteralValue::ComputeNumber() const {
-  DCHECK(IsNumber());
-  return ClampTo<double>(num_);
+  DCHECK(IsNumber() || IsPercentage());
+  if (IsPercentage()) {
+    return ClampTo<double>(num_ / 100.0);
+  } else {
+    return ClampTo<double>(num_);
+  }
 }
 
 double CSSNumericLiteralValue::ComputePercentage() const {
   DCHECK(IsPercentage());
-  return ClampTo<double>(num_);
+  return CSSValueClampingUtils::ClampDouble(num_);
 }
 
 bool CSSNumericLiteralValue::AccumulateLengthArray(CSSLengthArray& length_array,
@@ -184,17 +189,15 @@ bool CSSNumericLiteralValue::IsComputationallyIndependent() const {
 }
 
 static String FormatNumber(double number, const char* suffix) {
-#if BUILDFLAG(IS_WIN) && _MSC_VER < 1900
-  unsigned oldFormat = _set_output_format(_TWO_DIGIT_EXPONENT);
-#endif
-  String result = String::Format("%.6g%s", number, suffix);
-#if BUILDFLAG(IS_WIN) && _MSC_VER < 1900
-  _set_output_format(oldFormat);
-#endif
-  return result;
+  // https://www.w3.org/TR/cssom-1/#serialize-a-css-component-value specifies
+  // rounding, but does not specify the rounding mode.
+  // This function has historically used round-to-even, whereas blink::Format()
+  // rounds half away from zero. We use absl::StrFormat() for round-to-even
+  // to maintain compatibility.
+  return String(absl::StrFormat("%.6g%s", number, suffix));
 }
 
-static String FormatInfinityOrNaN(double number, const char* suffix) {
+static String FormatInfinityOrNaN(double number, StringView suffix) {
   String result;
   if (std::isinf(number)) {
     if (number > 0) {
@@ -208,8 +211,8 @@ static String FormatInfinityOrNaN(double number, const char* suffix) {
     result = "NaN";
   }
 
-  if (strlen(suffix) > 0) {
-    result = result + String::Format(" * 1%s", suffix);
+  if (suffix.length() > 0) {
+    result = StrCat({result, " * 1", suffix});
   }
   return result;
 }
@@ -300,18 +303,19 @@ String CSSNumericLiteralValue::CustomCSSText() const {
         if (!std::isfinite(value)) {
           text = FormatInfinityOrNaN(value, UnitTypeToString(GetType()));
         } else {
-          text = FormatNumber(value, UnitTypeToString(GetType()));
+          text =
+              FormatNumber(value, UnitTypeToString(GetType()).Utf8().c_str());
         }
       } else {
         StringBuilder builder;
         int int_value = value;
-        const char* unit_type = UnitTypeToString(GetType());
+        StringView unit_type = UnitTypeToString(GetType());
         builder.AppendNumber(int_value);
-        builder.Append(unit_type, static_cast<unsigned>(strlen(unit_type)));
+        builder.Append(unit_type);
         text = builder.ReleaseString();
       }
     } break;
-    default:
+    case UnitType::kIdent:
       NOTREACHED();
   }
   return text;
@@ -358,19 +362,51 @@ bool CSSNumericLiteralValue::Equals(const CSSNumericLiteralValue& other) const {
     case UnitType::kViewportHeight:
     case UnitType::kViewportMin:
     case UnitType::kViewportMax:
+    case UnitType::kViewportInlineSize:
+    case UnitType::kViewportBlockSize:
+    case UnitType::kSmallViewportWidth:
+    case UnitType::kSmallViewportHeight:
+    case UnitType::kSmallViewportInlineSize:
+    case UnitType::kSmallViewportBlockSize:
+    case UnitType::kSmallViewportMin:
+    case UnitType::kSmallViewportMax:
+    case UnitType::kLargeViewportWidth:
+    case UnitType::kLargeViewportHeight:
+    case UnitType::kLargeViewportInlineSize:
+    case UnitType::kLargeViewportBlockSize:
+    case UnitType::kLargeViewportMin:
+    case UnitType::kLargeViewportMax:
+    case UnitType::kDynamicViewportWidth:
+    case UnitType::kDynamicViewportHeight:
+    case UnitType::kDynamicViewportInlineSize:
+    case UnitType::kDynamicViewportBlockSize:
+    case UnitType::kDynamicViewportMin:
+    case UnitType::kDynamicViewportMax:
+    case UnitType::kContainerWidth:
+    case UnitType::kContainerHeight:
+    case UnitType::kContainerInlineSize:
+    case UnitType::kContainerBlockSize:
+    case UnitType::kContainerMin:
+    case UnitType::kContainerMax:
     case UnitType::kFlex:
+    case UnitType::kChs:
+    case UnitType::kIcs:
+    case UnitType::kLhs:
+    case UnitType::kRlhs:
+    case UnitType::kCaps:
+    case UnitType::kRcaps:
       return num_ == other.num_;
     case UnitType::kQuirkyEms:
-      return false;
-    default:
+    case UnitType::kIdent:
       return false;
   }
 }
 
-unsigned CSSNumericLiteralValue::CustomHash() const {
+uint32_t CSSNumericLiteralValue::CustomHash() const {
   uint64_t val = base::bit_cast<uint64_t>(num_);
-  return WTF::HashInts(static_cast<unsigned>(GetType()),
-                       WTF::HashInts(val >> 32, val));
+  return HashInts(
+      static_cast<uint32_t>(GetType()),
+      HashInts(static_cast<uint32_t>(val >> 32), static_cast<uint32_t>(val)));
 }
 
 CSSPrimitiveValue::UnitType CSSNumericLiteralValue::CanonicalUnit() const {

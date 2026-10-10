@@ -11,7 +11,6 @@
 #include "third_party/blink/renderer/core/paint/paint_info.h"
 #include "third_party/blink/renderer/core/paint/scoped_svg_paint_state.h"
 #include "third_party/blink/renderer/core/paint/svg_model_object_painter.h"
-#include "third_party/blink/renderer/core/paint/timing/image_element_timing.h"
 #include "third_party/blink/renderer/core/paint/timing/paint_timing.h"
 #include "third_party/blink/renderer/core/paint/timing/paint_timing_detector.h"
 #include "third_party/blink/renderer/core/svg/svg_animated_preserve_aspect_ratio.h"
@@ -25,49 +24,71 @@
 namespace blink {
 
 namespace {
-ImagePaintTimingInfo ComputeImagePaintTimingInfo(
+ReportPaintTiming ComputeReportPaintTiming(
     const LayoutSVGImage& layout_image,
     const Image& image,
     const ImageResourceContent* image_content,
     const GraphicsContext& context,
     const gfx::Rect& image_border) {
-  return ImagePaintTimingInfo(PaintTimingDetector::NotifyImagePaint(
+  PaintTimingDetector::NotifyImagePaint(
       layout_image, image.Size(), *image_content,
-      context.GetPaintController().CurrentPaintChunkProperties(),
-      image_border));
+      context.GetPaintController().CurrentPaintChunkProperties(), image_border);
+  return ReportPaintTiming::kReport;
 }
 }  // namespace
 
 void SVGImagePainter::Paint(const PaintInfo& paint_info) {
   if (paint_info.phase != PaintPhase::kForeground ||
-      layout_svg_image_.StyleRef().Visibility() != EVisibility::kVisible ||
       !layout_svg_image_.ImageResource()->HasImage()) {
     return;
   }
 
+  auto paint_behavior = ScopedSVGPaintState::ComputePaintBehavior(
+      layout_svg_image_, paint_info,
+      layout_svg_image_.StyleRef().Visibility() == EVisibility::kVisible);
+
+  if (paint_behavior.empty()) {
+    return;
+  }
+
+  if (paint_info.IsPrivacyPreserving() &&
+      !layout_svg_image_.ImageResource()->IsCorsSameOrigin()) {
+    return;
+  }
+
   if (SVGModelObjectPainter::CanUseCullRect(layout_svg_image_.StyleRef())) {
+    // CanUseCullRect returns false if there is a pixel moving filter, which
+    // includes reference filters. So execution should never reach here if
+    // painting only due to a reference filter.
+    CHECK(paint_behavior.Has(ScopedSVGPaintState::PaintComponent::kContent));
     if (!paint_info.GetCullRect().IntersectsTransformed(
             layout_svg_image_.LocalSVGTransform(),
-            layout_svg_image_.VisualRectInLocalSVGCoordinates()))
+            layout_svg_image_.VisualRectInLocalSVGCoordinates())) {
       return;
+    }
   }
   // Images cannot have children so do not call TransformCullRect.
 
   ScopedSVGTransformState transform_state(paint_info, layout_svg_image_);
   {
-    ScopedSVGPaintState paint_state(layout_svg_image_, paint_info);
-    SVGModelObjectPainter::RecordHitTestData(layout_svg_image_, paint_info);
-    SVGModelObjectPainter::RecordRegionCaptureData(layout_svg_image_,
-                                                   paint_info);
-    if (!DrawingRecorder::UseCachedDrawingIfPossible(
-            paint_info.context, layout_svg_image_, paint_info.phase)) {
-      SVGDrawingRecorder recorder(paint_info.context, layout_svg_image_,
-                                  paint_info.phase);
-      PaintForeground(paint_info);
+    ScopedSVGPaintState paint_state(layout_svg_image_, paint_info,
+                                    paint_behavior);
+    if (paint_behavior.Has(ScopedSVGPaintState::PaintComponent::kContent)) {
+      SVGModelObjectPainter::RecordHitTestData(layout_svg_image_, paint_info);
+      SVGModelObjectPainter::RecordRegionCaptureData(layout_svg_image_,
+                                                     paint_info);
+      if (!DrawingRecorder::UseCachedDrawingIfPossible(
+              paint_info.context, layout_svg_image_, paint_info.phase)) {
+        SVGDrawingRecorder recorder(paint_info.context, layout_svg_image_,
+                                    paint_info.phase);
+        PaintForeground(paint_info);
+      }
     }
   }
 
-  SVGModelObjectPainter(layout_svg_image_).PaintOutline(paint_info);
+  if (paint_behavior.Has(ScopedSVGPaintState::PaintComponent::kContent)) {
+    SVGModelObjectPainter(layout_svg_image_).PaintOutline(paint_info);
+  }
 }
 
 void SVGImagePainter::PaintForeground(const PaintInfo& paint_info) {
@@ -98,15 +119,6 @@ void SVGImagePainter::PaintForeground(const PaintInfo& paint_info) {
         dest_rect, src_rect);
   }
 
-  ImageResourceContent* image_content = image_resource.CachedImage();
-  if (image_content->IsLoaded()) {
-    LocalDOMWindow* window = layout_svg_image_.GetDocument().domWindow();
-    DCHECK(window);
-    ImageElementTiming::From(*window).NotifyImagePainted(
-        layout_svg_image_, *image_content,
-        paint_info.context.GetPaintController().CurrentPaintChunkProperties(),
-        gfx::ToEnclosingRect(dest_rect));
-  }
   PaintTiming& timing = PaintTiming::From(layout_svg_image_.GetDocument());
   timing.MarkFirstContentfulPaint();
 
@@ -121,9 +133,9 @@ void SVGImagePainter::PaintForeground(const PaintInfo& paint_info) {
       src_rect);
   paint_info.context.DrawImage(
       *image, decode_mode, image_auto_dark_mode,
-      ComputeImagePaintTimingInfo(layout_svg_image_, *image, image_content,
-                                  paint_info.context,
-                                  gfx::ToEnclosingRect(dest_rect)),
+      ComputeReportPaintTiming(layout_svg_image_, *image,
+                               image_resource.CachedImage(), paint_info.context,
+                               gfx::ToEnclosingRect(dest_rect)),
       dest_rect, &src_rect, SkBlendMode::kSrcOver, respect_orientation);
 }
 
@@ -153,7 +165,9 @@ gfx::SizeF SVGImagePainter::ComputeImageViewportSize() const {
   if (image_resource.ErrorOccurred()) {
     return gfx::SizeF();
   }
-  return image_resource.ConcreteObjectSize(zoom, default_object_size);
+  const NaturalSizingInfo sizing_info =
+      image_resource.GetNaturalDimensions(zoom);
+  return ConcreteObjectSize(sizing_info, default_object_size);
 }
 
 }  // namespace blink

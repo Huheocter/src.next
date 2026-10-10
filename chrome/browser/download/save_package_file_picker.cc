@@ -9,22 +9,26 @@
 #include <memory>
 
 #include "base/command_line.h"
+#include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/i18n/file_util_icu.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/download/chrome_download_manager_delegate.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/platform_util.h"
+
+#if BUILDFLAG(IS_ANDROID)
+#include "base/android/content_uri_utils.h"
+#endif
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/chrome_select_file_policy.h"
+#include "chrome/browser/ui/select_file_policy/chrome_select_file_policy.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/prefs/pref_member.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/download_manager.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -73,8 +77,9 @@ void AddSingleFileFileTypeInfo(
           FILE_PATH_LITERAL("mhtml")});
 }
 
-// Chrome OS doesn't support HTML-Complete. crbug.com/154823
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+// Chrome OS and Android intentionally do not support "Webpage, Complete" type.
+// See https://crbug.com/40951429
+#if !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_ANDROID)
 // Adds "Webpage, Complete" type to FileTypeInfo.
 void AddCompleteFileTypeInfo(
     ui::SelectFileDialog::FileTypeInfo* file_type_info,
@@ -89,7 +94,7 @@ void AddCompleteFileTypeInfo(
     extensions.push_back(extra_extension);
   file_type_info->extensions.push_back(extensions);
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_ANDROID)
 
 // Checks whether this is a blocked page (e.g., when a child user is accessing
 // a mature site).
@@ -120,12 +125,12 @@ bool SavePackageFilePicker::ShouldSaveAsOnlyHTML(
   return !profile->IsChild() || !IsErrorPage(web_contents);
 }
 
-bool SavePackageFilePicker::ShouldSaveAsMHTML() const {
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+bool SavePackageFilePicker::ShouldSaveAsMHTMLByDefault() const {
+#if !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_ANDROID)
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kSavePageAsMHTML))
     return false;
-#endif
+#endif  // !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_ANDROID)
   return can_save_as_complete_;
 }
 
@@ -137,7 +142,7 @@ SavePackageFilePicker::SavePackageFilePicker(
     DownloadPrefs* download_prefs,
     content::SavePackagePathPickedCallback callback)
     : render_process_id_(
-          web_contents->GetPrimaryMainFrame()->GetProcess()->GetID()),
+          web_contents->GetPrimaryMainFrame()->GetProcess()->GetDeprecatedID()),
       can_save_as_complete_(can_save_as_complete),
       download_prefs_(download_prefs),
       callback_(std::move(callback)) {
@@ -154,7 +159,8 @@ SavePackageFilePicker::SavePackageFilePicker(
     save_types_.push_back(content::SAVE_PAGE_TYPE_UNKNOWN);
 
     base::FilePath::StringType extra_extension;
-    if (!ShouldSaveAsMHTML() && !suggested_path_copy.FinalExtension().empty() &&
+    if (!ShouldSaveAsMHTMLByDefault() &&
+        !suggested_path_copy.FinalExtension().empty() &&
         !suggested_path_copy.MatchesExtension(FILE_PATH_LITERAL(".htm")) &&
         !suggested_path_copy.MatchesExtension(FILE_PATH_LITERAL(".html"))) {
       extra_extension = suggested_path_copy.FinalExtension().substr(1);
@@ -165,22 +171,20 @@ SavePackageFilePicker::SavePackageFilePicker(
       save_types_.push_back(content::SAVE_PAGE_TYPE_AS_ONLY_HTML);
     }
 
-    if (can_save_as_complete_) {
-      AddSingleFileFileTypeInfo(&file_type_info);
-      save_types_.push_back(content::SAVE_PAGE_TYPE_AS_MHTML);
-    }
+    AddSingleFileFileTypeInfo(&file_type_info);
+    save_types_.push_back(content::SAVE_PAGE_TYPE_AS_MHTML);
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_ANDROID)
     AddCompleteFileTypeInfo(&file_type_info, extra_extension);
     save_types_.push_back(content::SAVE_PAGE_TYPE_AS_COMPLETE_HTML);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_ANDROID)
 
     file_type_info.include_all_files = false;
 
-    content::SavePageType preferred_save_type =
-        static_cast<content::SavePageType>(download_prefs_->save_file_type());
-    if (ShouldSaveAsMHTML())
-      preferred_save_type = content::SAVE_PAGE_TYPE_AS_MHTML;
+    const content::SavePageType preferred_save_type =
+        ShouldSaveAsMHTMLByDefault() ? content::SAVE_PAGE_TYPE_AS_MHTML
+                                     : static_cast<content::SavePageType>(
+                                           download_prefs_->save_file_type());
 
     // Select the item saved in the pref.
     for (size_t i = 0; i < save_types_.size(); ++i) {
@@ -191,8 +195,9 @@ SavePackageFilePicker::SavePackageFilePicker(
     }
 
     // If the item saved in the pref was not found, use the last item.
-    if (!file_type_index)
+    if (!file_type_index) {
       file_type_index = save_types_.size() - 1;
+    }
   } else {
     // The contents can not be saved as complete-HTML, so do not show the file
     // filters.
@@ -256,12 +261,21 @@ void SavePackageFilePicker::FileSelected(const ui::SelectedFileInfo& file,
   SavePageType save_type = content::SAVE_PAGE_TYPE_UNKNOWN;
 
   if (can_save_as_complete_) {
+#if BUILDFLAG(IS_ANDROID)
+    if (index > 0 && index < static_cast<int>(save_types_.size())) {
+      save_type = save_types_[index];
+    }
+    if (save_type == content::SAVE_PAGE_TYPE_UNKNOWN) {
+      save_type = content::SAVE_PAGE_TYPE_AS_MHTML;
+    }
+#else
     DCHECK_LT(index, static_cast<int>(save_types_.size()));
     save_type = save_types_[index];
     if (select_file_dialog_ &&
         select_file_dialog_->HasMultipleFileTypeChoices()) {
       download_prefs_->SetSaveFileType(save_type);
     }
+#endif
   } else {
     // Use "HTML Only" type as a dummy.
     save_type = content::SAVE_PAGE_TYPE_AS_ONLY_HTML;
@@ -270,13 +284,30 @@ void SavePackageFilePicker::FileSelected(const ui::SelectedFileInfo& file,
   base::FilePath path = file.path();
   base::i18n::NormalizeFileNameEncoding(&path);
 
+#if BUILDFLAG(IS_ANDROID)
+  if (!path.IsContentUri()) {
+    download_prefs_->SetSaveFilePath(path.DirName());
+  }
+#else
   download_prefs_->SetSaveFilePath(path.DirName());
+#endif
 
   content::SavePackagePathPickedParams params;
   params.file_path = path;
   params.save_type = save_type;
 #if BUILDFLAG(IS_MAC)
   params.file_tags = file.file_tags;
+#endif
+#if BUILDFLAG(IS_ANDROID)
+  params.display_name =
+      base::FilePath::FromUTF8Unsafe(file.display_name).BaseName();
+  if (params.display_name.empty() && path.IsContentUri()) {
+    std::u16string display_name_u16;
+    if (base::MaybeGetFileDisplayName(path, &display_name_u16)) {
+      params.display_name =
+          base::FilePath::FromUTF16Unsafe(display_name_u16).BaseName();
+    }
+  }
 #endif
   std::move(callback_).Run(std::move(params),
                            base::BindOnce(&OnSavePackageDownloadCreated));

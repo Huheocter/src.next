@@ -11,7 +11,10 @@
 #include "base/android/scoped_java_ref.h"
 #include "base/memory/raw_ptr.h"
 #include "components/download/public/common/download_item.h"
-#include "ui/gfx/native_widget_types.h"
+
+namespace ui {
+class WindowAndroid;
+}
 
 // Class for showing dialogs to asks whether user wants to download a dangerous
 // file.
@@ -29,15 +32,18 @@ class DangerousDownloadDialogBridge : public download::DownloadItem::Observer {
             ui::WindowAndroid* window_android);
 
   // Called from Java via JNI.
-  void Accepted(JNIEnv* env,
-                const base::android::JavaParamRef<jstring>& jdownload_guid);
+  void Accepted(const std::string& download_guid);
 
   // Called from Java via JNI.
-  void Cancelled(JNIEnv* env,
-                 const base::android::JavaParamRef<jstring>& jdownload_guid);
+  void Cancelled(const std::string& download_guid);
 
   // download::DownloadItem::Observer:
   void OnDownloadDestroyed(download::DownloadItem* download_item) override;
+
+  // Returns the download domain string shown in the dialog. Exposed for
+  // testing.
+  static std::u16string GetDownloadDomainForTesting(
+      download::DownloadItem* item);
 
  private:
   // Download items that are requesting the dialog. Could get deleted while

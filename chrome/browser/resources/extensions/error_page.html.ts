@@ -20,7 +20,8 @@ export function getHtml(this: ExtensionsErrorPageElement) {
         <cr-icon-button id="dev-reload-button" class="icon-refresh no-overlap"
             title="$i18n{itemReload}" aria-label="$i18n{itemReload}"
             aria-describedby="a11yAssociation" @click="${this.onReloadClick_}">
-        </cr-icon-button>` : ''}
+        </cr-icon-button>
+      ` : ''}
       <cr-button @click="${this.onClearAllClick_}"
           ?hidden="${!this.entries_.length}">
         $i18n{clearAll}
@@ -31,8 +32,8 @@ export function getHtml(this: ExtensionsErrorPageElement) {
         ${this.entries_.map((entry, index) => html`
           <div class="item-container">
             <div class="cr-row error-item ${this.computeErrorClass_(index)}">
-              <div actionable class="start" @click="${this.onErrorItemAction_}"
-                  @keydown="${this.onErrorItemAction_}" tabindex="0"
+              <div actionable class="start" @click="${this.onErrorItemClick_}"
+                  @keydown="${this.onErrorItemKeydown_}" tabindex="0"
                   data-error-index="${index}" role="button"
                   aria-expanded="${this.isAriaExpanded_(index)}">
                 <cr-icon .icon="${this.computeErrorIcon_(entry)}"
@@ -41,13 +42,12 @@ export function getHtml(this: ExtensionsErrorPageElement) {
                 <div id="${entry.id}" class="error-message">
                   ${entry.message}
                 </div>
-                <div class="cr-icon ${this.iconName_(index)}">
-                </div>
+                <div class="cr-icon ${this.iconName_(index)}"></div>
               </div>
               <div class="separator"></div>
               <cr-icon-button class="icon-delete-gray"
                   data-error-id="${entry.id}"
-                  @click="${this.onDeleteErrorAction_}"
+                  @click="${this.onDeleteErrorClick_}"
                   aria-describedby="${entry.id}" aria-label="$i18n{clearEntry}">
               </cr-icon-button>
             </div>
@@ -76,15 +76,26 @@ export function getHtml(this: ExtensionsErrorPageElement) {
                           ?hidden="${!this.shouldDisplayFrame_(item.url)}"
                           class="${this.getStackFrameClass_(item)}">
                         ${this.getStackTraceLabel_(item)}
-                      </li>`)}
-                  </ul>` : ''}
+                      </li>
+                    `)}
+                  </ul>
+                  ${(entry as chrome.developerPrivate.RuntimeError).canInspect ?
+                      html`
+                    <cr-button class="view-devtools-button"
+                        data-error-index="${index}"
+                        @click="${this.onViewInDevToolsClick_}">
+                      $i18n{viewInDevTools}
+                    </cr-button>
+                  ` : ''}
+                ` : ''}
                 <extensions-code-section .code="${this.code_}"
                     ?is-active="${this.isOpened_(index)}"
                     could-not-display-code="$i18n{noErrorsToShow}">
                 </extensions-code-section>
               </div>
             </cr-collapse>
-          </div>`)}
+          </div>
+        `)}
       </div>
     </div>
   </div>

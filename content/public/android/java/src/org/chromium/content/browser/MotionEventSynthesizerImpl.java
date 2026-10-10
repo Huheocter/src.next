@@ -10,9 +10,11 @@ import android.view.MotionEvent.PointerCoords;
 import android.view.MotionEvent.PointerProperties;
 import android.view.View;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.content_public.browser.MotionEventSynthesizer;
 
 /** Injects synthetic touch events. All the coordinates are of physical unit. */
+@NullMarked
 public class MotionEventSynthesizerImpl implements MotionEventSynthesizer {
     private static final int MAX_NUM_POINTERS = 16;
 
@@ -101,7 +103,7 @@ public class MotionEventSynthesizerImpl implements MotionEventSynthesizer {
                     // We currently only handle two fingers.
                     assert pointerIndex == 0 || pointerIndex == 1;
                     assert pointerCount <= 2;
-                    int action_bitfield =
+                    int actionBitfield =
                             pointerIndex == 0
                                     ? MotionEvent.ACTION_DOWN
                                     : MotionEvent.ACTION_POINTER_DOWN
@@ -111,7 +113,7 @@ public class MotionEventSynthesizerImpl implements MotionEventSynthesizer {
                             MotionEvent.obtain(
                                     mDownTimeInMs,
                                     timeInMs,
-                                    action_bitfield,
+                                    actionBitfield,
                                     pointerIndex + 1,
                                     mPointerProperties,
                                     mPointerCoords,
@@ -176,7 +178,7 @@ public class MotionEventSynthesizerImpl implements MotionEventSynthesizer {
                     // We currently only handle two fingers.
                     assert pointerIndex == 0 || pointerIndex == 1;
                     assert pointerCount <= 2;
-                    int action_bitfield =
+                    int actionBitfield =
                             pointerIndex == 0
                                     ? MotionEvent.ACTION_UP
                                     : MotionEvent.ACTION_POINTER_UP
@@ -185,7 +187,7 @@ public class MotionEventSynthesizerImpl implements MotionEventSynthesizer {
                             MotionEvent.obtain(
                                     mDownTimeInMs,
                                     timeInMs,
-                                    action_bitfield,
+                                    actionBitfield,
                                     pointerIndex + 1,
                                     mPointerProperties,
                                     mPointerCoords,

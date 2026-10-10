@@ -7,17 +7,19 @@ package org.chromium.chrome.browser.tabmodel;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
-import org.chromium.chrome.browser.tab.EmptyTabObserver;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabObserver;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /** Observer of tab changes for all tabs owned by a {@link TabModelSelector}. */
-public class TabModelSelectorTabObserver extends EmptyTabObserver {
+@NullMarked
+public class TabModelSelectorTabObserver implements TabObserver {
     private final TabModelSelectorTabRegistrationObserver mTabRegistrationObserver;
     private boolean mShouldDeferTabRegisterNotifications;
-    private List<Tab> mDeferredTabs = new ArrayList<>();
+    private final List<Tab> mDeferredTabs = new ArrayList<>();
     private boolean mIsDestroyed;
     private boolean mIsDeferredInitializationFinished;
 
@@ -41,7 +43,7 @@ public class TabModelSelectorTabObserver extends EmptyTabObserver {
         // constructor of the inherited classes are completed and the relevant local
         // variables are ready.
         // TODO(jinsukkim): Consider making this class final, and introducing an inner
-        //     class that extends EmptyTabObserver + provides onTab[Un]Registered instead.
+        //     class that implements TabObserver + provides onTab[Un]Registered instead.
         ThreadUtils.getUiThreadHandler()
                 .postAtFrontOfQueue(
                         () -> {
@@ -90,8 +92,6 @@ public class TabModelSelectorTabObserver extends EmptyTabObserver {
             }
 
             private void performUnregister(Tab tab) {
-                // If the tab as been destroyed we cannot access PersistedTabData.
-                if (tab.isDestroyed()) return;
                 tab.removeObserver(TabModelSelectorTabObserver.this);
             }
         };

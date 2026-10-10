@@ -5,7 +5,6 @@
 #ifndef CHROME_BROWSER_UI_FULLSCREEN_UTIL_MAC_H_
 #define CHROME_BROWSER_UI_FULLSCREEN_UTIL_MAC_H_
 
-class Browser;
 class BrowserWindowInterface;
 
 namespace fullscreen_utils {
@@ -14,11 +13,13 @@ namespace fullscreen_utils {
 // - `browser` is currently in fullscreen
 // - the fullscreen mode is web or extension API initiated (as opposed to via
 //   macOS affordances like traffic lights
-bool IsInContentFullscreen(BrowserWindowInterface* browser_window_interface);
+bool IsInContentFullscreen(
+    const BrowserWindowInterface* browser_window_interface);
 
 // Whether the "Always Show Toolbar in Full Screen" setting is enabled. Properly
 // handles PWAs.
-bool IsAlwaysShowToolbarEnabled(const Browser* browser);
+bool IsAlwaysShowToolbarEnabled(
+    const BrowserWindowInterface* browser_window_interface);
 
 }  // namespace fullscreen_utils
 

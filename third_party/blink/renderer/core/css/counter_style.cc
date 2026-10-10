@@ -29,15 +29,20 @@
 #include "third_party/blink/renderer/core/css/counter_style.h"
 
 #include "base/auto_reset.h"
+#include "third_party/blink/renderer/core/css/cascade_layer.h"
 #include "third_party/blink/renderer/core/css/counter_style_map.h"
 #include "third_party/blink/renderer/core/css/css_custom_ident_value.h"
 #include "third_party/blink/renderer/core/css/css_identifier_value.h"
+#include "third_party/blink/renderer/core/css/css_property_value_set.h"
 #include "third_party/blink/renderer/core/css/css_string_value.h"
+#include "third_party/blink/renderer/core/css/css_symbols_value.h"
 #include "third_party/blink/renderer/core/css/css_value_list.h"
 #include "third_party/blink/renderer/core/css/css_value_pair.h"
+#include "third_party/blink/renderer/core/css/media_values_cached.h"
 #include "third_party/blink/renderer/core/css/style_rule_counter_style.h"
 #include "third_party/blink/renderer/core/css_value_keywords.h"
 #include "third_party/blink/renderer/core/keywords.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/text/text_break_iterator.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
@@ -47,8 +52,8 @@ namespace {
 
 // User agents must support representations at least 60 Unicode codepoints long,
 // but they may choose to instead use the fallback style for representations
-// that would be longer than 60 codepoints. Since WTF::String may use UTF-16, we
-// limit string length at 120.
+// that would be longer than 60 codepoints. Since blink::String may use UTF-16,
+// we limit string length at 120.
 const wtf_size_t kCounterLengthLimit = 120;
 
 const CounterStyle& GetDisc() {
@@ -91,7 +96,9 @@ String SymbolToString(const CSSValue& value) {
   return To<CSSCustomIdentValue>(value).Value();
 }
 
-std::pair<int, int> BoundsToIntegerPair(const CSSValuePair& bounds) {
+std::pair<int, int> BoundsToIntegerPair(
+    const CSSValuePair& bounds,
+    const CSSLengthResolver& length_resolver) {
   int lower_bound, upper_bound;
   if (bounds.First().IsIdentifierValue()) {
     DCHECK_EQ(CSSValueID::kInfinite,
@@ -99,7 +106,8 @@ std::pair<int, int> BoundsToIntegerPair(const CSSValuePair& bounds) {
     lower_bound = std::numeric_limits<int>::min();
   } else {
     DCHECK(bounds.First().IsPrimitiveValue());
-    lower_bound = To<CSSPrimitiveValue>(bounds.First()).GetIntValue();
+    lower_bound =
+        To<CSSPrimitiveValue>(bounds.First()).ComputeInteger(length_resolver);
   }
   if (bounds.Second().IsIdentifierValue()) {
     DCHECK_EQ(CSSValueID::kInfinite,
@@ -107,7 +115,8 @@ std::pair<int, int> BoundsToIntegerPair(const CSSValuePair& bounds) {
     upper_bound = std::numeric_limits<int>::max();
   } else {
     DCHECK(bounds.Second().IsPrimitiveValue());
-    upper_bound = To<CSSPrimitiveValue>(bounds.Second()).GetIntValue();
+    upper_bound =
+        To<CSSPrimitiveValue>(bounds.Second()).ComputeInteger(length_resolver);
   }
   return std::make_pair(lower_bound, upper_bound);
 }
@@ -163,7 +172,7 @@ Vector<wtf_size_t> AlphabeticAlgorithm(unsigned value, wtf_size_t num_symbols) {
     // Since length is logarithmic to value, we won't exceed the length limit.
     DCHECK_LE(result.size(), kCounterLengthLimit);
   }
-  std::reverse(result.begin(), result.end());
+  std::ranges::reverse(result);
   return result;
 }
 
@@ -182,7 +191,7 @@ Vector<wtf_size_t> NumericAlgorithm(unsigned value, wtf_size_t num_symbols) {
     // Since length is logarithmic to value, we won't exceed the length limit.
     DCHECK_LE(result.size(), kCounterLengthLimit);
   }
-  std::reverse(result.begin(), result.end());
+  std::ranges::reverse(result);
   return result;
 }
 
@@ -205,7 +214,7 @@ Vector<wtf_size_t> AdditiveAlgorithm(unsigned value,
       if (result.size() + repetitions > kCounterLengthLimit) {
         return Vector<wtf_size_t>();
       }
-      result.AppendVector(Vector<wtf_size_t>(repetitions, index));
+      result.append_range(Vector<wtf_size_t>(repetitions, index));
     }
     value %= weights[index];
   }
@@ -248,7 +257,7 @@ String CJKIdeoGraphicAlgorithm(unsigned number,
   };
 
   if (number == 0) {
-    return String(&table[kDigit0], 1u);
+    return String(base::span_from_ref(table[kDigit0]));
   }
 
   constexpr unsigned kGroupLength =
@@ -361,7 +370,7 @@ String CJKIdeoGraphicAlgorithm(unsigned number,
     --length;
   }
 
-  return String(characters.data(), length);
+  return String(base::span(characters).first(length));
 }
 
 String SimpChineseInformalAlgorithm(unsigned value) {
@@ -461,16 +470,17 @@ String HebrewAlgorithm(unsigned number) {
 
   if (number == 0) {
     static const UChar kHebrewZero[3] = {0x05D0, 0x05E4, 0x05E1};
-    return String(kHebrewZero, 3u);
+    return String(base::span(kHebrewZero));
   }
 
   if (number <= 999) {
     return HebrewAlgorithmUnder1000(number);
   }
 
-  return HebrewAlgorithmUnder1000(number / 1000) +
-         kHebrewPunctuationGereshCharacter +
-         HebrewAlgorithmUnder1000(number % 1000);
+  return StrCat(
+      {HebrewAlgorithmUnder1000(number / 1000),
+       StringView(base::span_from_ref(uchar::kHebrewPunctuationGeresh)),
+       HebrewAlgorithmUnder1000(number % 1000)});
 }
 
 String ArmenianAlgorithmUnder10000(unsigned number,
@@ -524,8 +534,8 @@ String ArmenianAlgorithm(unsigned number, bool upper) {
   if (!number || number > 99999999) {
     return String();
   }
-  return ArmenianAlgorithmUnder10000(number / 10000, upper, true) +
-         ArmenianAlgorithmUnder10000(number % 10000, upper, false);
+  return StrCat({ArmenianAlgorithmUnder10000(number / 10000, upper, true),
+                 ArmenianAlgorithmUnder10000(number % 10000, upper, false)});
 }
 
 // https://drafts.csswg.org/css-counter-styles-3/#ethiopic-numeric-counter-style
@@ -540,7 +550,7 @@ String EthiopicNumericAlgorithm(unsigned value) {
     return String();
   }
   if (value < 10u) {
-    return String(&units[value - 1], 1u);
+    return String(base::span_from_ref(units[value - 1]));
   }
 
   // Generate characters in the reversed ordering
@@ -550,10 +560,10 @@ String EthiopicNumericAlgorithm(unsigned value) {
     value /= 100;
     if (!odd_group) {
       // This adds an extra character for group 0. We'll remove it in the end.
-      result.push_back(kEthiopicNumberTenThousandCharacter);
+      result.push_back(uchar::kEthiopicNumberTenThousand);
     } else {
       if (group_value) {
-        result.push_back(kEthiopicNumberHundredCharacter);
+        result.push_back(uchar::kEthiopicNumberHundred);
       }
     }
     bool most_significant_group = !value;
@@ -570,10 +580,10 @@ String EthiopicNumericAlgorithm(unsigned value) {
     }
   }
 
-  std::reverse(result.begin(), result.end());
+  std::ranges::reverse(result);
   // Remove the extra character from group 0
   result.pop_back();
-  return String(result.data(), result.size());
+  return String(result);
 }
 
 }  // namespace
@@ -600,7 +610,6 @@ CounterStyleSystem CounterStyle::ToCounterStyleSystemEnum(
     system_keyword = id->GetValueID();
   } else {
     // Either fixed or extends.
-    DCHECK(value->IsValuePair());
     const CSSValuePair* pair = To<CSSValuePair>(value);
     DCHECK(pair->First().IsIdentifierValue());
     system_keyword = To<CSSIdentifierValue>(pair->First()).GetValueID();
@@ -671,49 +680,132 @@ AtomicString CounterStyle::GetName() const {
   return style_rule_->GetName();
 }
 
+AtomicString CounterStyle::GetEffectiveSymbolMarkerName() const {
+  // Walk the `extends` chain until we reach a predefined symbol marker, as the
+  // extends chain can in rare cases be more than one layer deep.
+  for (const CounterStyle* style = this; style;
+       style = style->extended_style_.Get()) {
+    if (style->is_predefined_symbol_marker_) {
+      CHECK(!style->GetName().empty());
+      return style->GetName();
+    }
+  }
+  return g_null_atom;
+}
+
+bool CounterStyle::IsDisclosureMarker() const {
+  const AtomicString name = GetEffectiveSymbolMarkerName();
+  return name == keywords::kDisclosureOpen ||
+         name == keywords::kDisclosureClosed;
+}
+
 // static
-CounterStyle* CounterStyle::Create(const StyleRuleCounterStyle& rule) {
-  if (!rule.HasValidSymbols()) {
+CounterStyle* CounterStyle::Create(
+    const CascadeLayered<const StyleRuleCounterStyle>& rule) {
+  if (!rule.value->HasValidSymbols()) {
     return nullptr;
   }
 
   return MakeGarbageCollected<CounterStyle>(rule);
 }
 
-CounterStyle::CounterStyle(const StyleRuleCounterStyle& rule)
-    : style_rule_(rule), style_rule_version_(rule.GetVersion()) {
-  if (const CSSValue* system = rule.GetSystem()) {
+// static
+CounterStyle* CounterStyle::CreateAnonymousCounterStyle(
+    const cssvalue::CSSSymbolsValue& symbols_value) {
+  auto* properties = MakeGarbageCollected<MutableCSSPropertyValueSet>(
+      kCSSCounterStyleRuleMode);
+
+  // A `StyleRuleCounterStyle` with no `system` descriptor already defaults to
+  // `symbolic`, so we only set it for non-default systems.
+  if (symbols_value.GetSystem() != CSSValueID::kSymbolic) {
+    properties->SetProperty(
+        CSSPropertyID::kSystem,
+        *CSSIdentifierValue::Create(symbols_value.GetSystem()));
+  }
+  properties->SetProperty(CSSPropertyID::kSymbols, symbols_value.Symbols());
+
+  // Unlike an @counter-style rule (whose `suffix` descriptor is author-settable
+  // and defaults to ". "), symbols() has no suffix descriptor, so per spec its
+  // suffix is always a single space.
+  properties->SetProperty(CSSPropertyID::kSuffix,
+                          *MakeGarbageCollected<CSSStringValue>(" "));
+
+  // The counter style is anonymous: it is created with an empty name and is
+  // never registered along with other custom counter styles in a
+  // `CounterStyleMap`.
+  auto* rule =
+      MakeGarbageCollected<StyleRuleCounterStyle>(g_empty_atom, properties);
+
+  // symbols() is parsed only after its symbol list is validated (>= 1 symbol,
+  // and >= 2 for the 'alphabetic' and 'numeric' systems), so the rule will
+  // always be valid.
+  CounterStyle* counter_style = CounterStyle::Create(
+      CascadeLayered<const StyleRuleCounterStyle>(rule, /*layer=*/nullptr));
+  CHECK(counter_style);
+
+  // Out-of-range counter values (e.g. 0 or negatives) fall back to 'decimal'.
+  // Resolve the fallback now so rendering never dereferences a null fallback.
+  counter_style->ResolveFallback(GetDecimal());
+  return counter_style;
+}
+
+bool CounterStyle::operator==(const CounterStyle& other) const {
+  return *style_rule_ == *other.style_rule_ &&
+         extended_style_ == other.extended_style_ &&
+         fallback_style_ == other.fallback_style_ &&
+         speak_as_style_ == other.speak_as_style_;
+}
+
+CounterStyle::CounterStyle(
+    const CascadeLayered<const StyleRuleCounterStyle>& rule)
+    : style_rule_(rule.value),
+      cascade_layer_(rule.layer),
+      style_rule_version_(rule.value->GetVersion()) {
+  // TODO(sesse): Send the LocalFrame down here, so that we can use
+  // MediaValues::CreateDynamicIfFrameExists() instead, which includes
+  // the effects of local font settings.
+  MediaValues* media_values = MakeGarbageCollected<MediaValuesCached>();
+
+  if (const CSSValue* system = style_rule_->GetSystem()) {
     system_ = ToCounterStyleSystemEnum(system);
 
     if (system_ == CounterStyleSystem::kUnresolvedExtends) {
       const auto& second = To<CSSValuePair>(system)->Second();
       extends_name_ = To<CSSCustomIdentValue>(second).Value();
-    } else if (system_ == CounterStyleSystem::kFixed && system->IsValuePair()) {
+    } else if (system_ == CounterStyleSystem::kFixed &&
+               system->IsBaseValuePair()) {
       const auto& second = To<CSSValuePair>(system)->Second();
-      first_symbol_value_ = To<CSSPrimitiveValue>(second).GetIntValue();
+      first_symbol_value_ =
+          To<CSSPrimitiveValue>(second).ComputeInteger(*media_values);
     }
   }
 
-  if (const CSSValue* fallback = rule.GetFallback()) {
+  if (const CSSValue* fallback = style_rule_->GetFallback()) {
     fallback_name_ = To<CSSCustomIdentValue>(fallback)->Value();
   }
 
   if (HasSymbols(system_)) {
     if (system_ == CounterStyleSystem::kAdditive) {
-      for (const auto& symbol : To<CSSValueList>(*rule.GetAdditiveSymbols())) {
+      const CSSValueList* symbols =
+          To<CSSValueList>(style_rule_->GetAdditiveSymbols());
+      symbols_.ReserveInitialCapacity(symbols->length());
+      additive_weights_.ReserveInitialCapacity(symbols->length());
+      for (const auto& symbol : *symbols) {
         const auto& pair = To<CSSValuePair>(*symbol.Get());
         additive_weights_.push_back(
-            To<CSSPrimitiveValue>(pair.First()).GetIntValue());
+            To<CSSPrimitiveValue>(pair.First()).ComputeInteger(*media_values));
         symbols_.push_back(SymbolToString(pair.Second()));
       }
     } else {
-      for (const auto& symbol : To<CSSValueList>(*rule.GetSymbols())) {
+      const CSSValueList* symbols = To<CSSValueList>(style_rule_->GetSymbols());
+      symbols_.ReserveInitialCapacity(symbols->length());
+      for (const auto& symbol : *symbols) {
         symbols_.push_back(SymbolToString(*symbol.Get()));
       }
     }
   }
 
-  if (const CSSValue* negative = rule.GetNegative()) {
+  if (const CSSValue* negative = style_rule_->GetNegative()) {
     if (const CSSValuePair* pair = DynamicTo<CSSValuePair>(negative)) {
       negative_prefix_ = SymbolToString(pair->First());
       negative_suffix_ = SymbolToString(pair->Second());
@@ -722,32 +814,34 @@ CounterStyle::CounterStyle(const StyleRuleCounterStyle& rule)
     }
   }
 
-  if (const CSSValue* pad = rule.GetPad()) {
+  if (const CSSValue* pad = style_rule_->GetPad()) {
     const CSSValuePair& pair = To<CSSValuePair>(*pad);
-    pad_length_ = To<CSSPrimitiveValue>(pair.First()).GetIntValue();
+    pad_length_ =
+        To<CSSPrimitiveValue>(pair.First()).ComputeInteger(*media_values);
     pad_symbol_ = SymbolToString(pair.Second());
   }
 
-  if (const CSSValue* range = rule.GetRange()) {
+  if (const CSSValue* range = style_rule_->GetRange()) {
     if (range->IsIdentifierValue()) {
       DCHECK_EQ(CSSValueID::kAuto, To<CSSIdentifierValue>(range)->GetValueID());
       // Empty |range_| already means 'auto'.
     } else {
       for (const CSSValue* bounds : To<CSSValueList>(*range)) {
-        range_.push_back(BoundsToIntegerPair(To<CSSValuePair>(*bounds)));
+        range_.push_back(
+            BoundsToIntegerPair(To<CSSValuePair>(*bounds), *media_values));
       }
     }
   }
 
-  if (const CSSValue* prefix = rule.GetPrefix()) {
+  if (const CSSValue* prefix = style_rule_->GetPrefix()) {
     prefix_ = SymbolToString(*prefix);
   }
-  if (const CSSValue* suffix = rule.GetSuffix()) {
+  if (const CSSValue* suffix = style_rule_->GetSuffix()) {
     suffix_ = SymbolToString(*suffix);
   }
 
   if (RuntimeEnabledFeatures::CSSAtRuleCounterStyleSpeakAsDescriptorEnabled()) {
-    if (const CSSValue* speak_as = rule.GetSpeakAs()) {
+    if (const CSSValue* speak_as = style_rule_->GetSpeakAs()) {
       if (const auto* keyword = DynamicTo<CSSIdentifierValue>(speak_as)) {
         speak_as_ = ToCounterStyleSpeakAsEnum(*keyword);
       } else {
@@ -1072,10 +1166,10 @@ String CounterStyle::GenerateTextAlternative(int value) const {
   // custom prefix or suffix. Use the suffix of the predefined symbolic
   // styles instead.
   if (EffectiveSpeakAs() == CounterStyleSpeakAs::kBullets) {
-    return text_without_prefix_suffix + " ";
+    return StrCat({text_without_prefix_suffix, " "});
   }
 
-  return prefix_ + text_without_prefix_suffix + suffix_;
+  return StrCat({prefix_, text_without_prefix_suffix, suffix_});
 }
 
 String CounterStyle::GenerateTextAlternativeWithoutPrefixSuffix(
@@ -1102,6 +1196,7 @@ String CounterStyle::GenerateTextAlternativeWithoutPrefixSuffix(
 
 void CounterStyle::Trace(Visitor* visitor) const {
   visitor->Trace(style_rule_);
+  visitor->Trace(cascade_layer_);
   visitor->Trace(extended_style_);
   visitor->Trace(fallback_style_);
   visitor->Trace(speak_as_style_);

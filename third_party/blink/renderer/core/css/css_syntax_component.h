@@ -104,11 +104,7 @@ class CSSSyntaxComponent {
     DCHECK(IsRepeatable());
     return repeat_ == CSSSyntaxRepeat::kSpaceSeparated ? ' ' : ',';
   }
-  String ToString() const {
-    String result =
-        (type_ == CSSSyntaxType::kIdent) ? string_ : blink::ToString(type_);
-    return result + blink::ToString(repeat_);
-  }
+  String ToString() const;
 
  private:
   CSSSyntaxType type_;

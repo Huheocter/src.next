@@ -7,10 +7,12 @@
 dictionary FontFaceDescriptors {
     CSSOMString style = "normal";
     CSSOMString weight = "normal";
+    CSSOMString width;
     CSSOMString stretch = "normal";
     CSSOMString unicodeRange = "U+0-10FFFF";
     CSSOMString variant = "normal";
     CSSOMString featureSettings = "normal";
+    [RuntimeEnabled=FontVariationSettingsDescriptor] CSSOMString variationSettings = "normal";
     CSSOMString display = "auto";
     [MeasureAs=FontFaceAscentOverride] CSSOMString ascentOverride = "normal";
     [MeasureAs=FontFaceDescentOverride] CSSOMString descentOverride = "normal";

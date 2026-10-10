@@ -11,16 +11,16 @@ import android.view.inputmethod.InputConnection;
 import android.widget.EditText;
 import android.widget.TextView;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
-import java.util.Optional;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 
 /** An abstraction of the text model to show, keep track of, and update autocomplete. */
+@NullMarked
 public interface AutocompleteEditTextModelBase {
     /** An embedder should implement this. */
-    public interface Delegate {
+    interface Delegate {
         /**
          * @see TextView#getText()
          */
@@ -72,9 +72,9 @@ public interface AutocompleteEditTextModelBase {
         boolean isFocused();
 
         /**
-         * @see TextView#sendAccessibilityEventUnchecked(AccessibilityEvent)
+         * @see TextView#sendAccessibilityEvent(AccessibilityEvent)
          */
-        void sendAccessibilityEventUnchecked(AccessibilityEvent event);
+        void sendAccessibilityEvent(AccessibilityEvent event);
 
         /**
          * Call super.dispatchKeyEvent(KeyEvent).
@@ -99,6 +99,21 @@ public interface AutocompleteEditTextModelBase {
         void onAutocompleteTextStateChanged(boolean updateDisplay);
 
         /**
+         * @return The package name of the current keyboard app.
+         */
+        String getKeyboardPackageName();
+
+        /** Specifies whether the current user input should be shown as multi-line. */
+        void setInputIsMultilineEligible(boolean isMultilineEligible);
+
+        /**
+         * Sets or removes the site search chip displayed inside the omnibox.
+         *
+         * @param siteSearchLabel The label to display, or null/empty to remove the chip.
+         */
+        void setSiteSearchChip(@Nullable String siteSearchLabel);
+
+        /**
          * This is called roughly the same time as when we call
          * InputMethodManager#updateSelection().
          *
@@ -106,11 +121,6 @@ public interface AutocompleteEditTextModelBase {
          * @param selEnd Selection end.
          */
         void onUpdateSelectionForTesting(int selStart, int selEnd);
-
-        /**
-         * @return The package name of the current keyboard app.
-         */
-        String getKeyboardPackageName();
     }
 
     /**
@@ -119,7 +129,7 @@ public interface AutocompleteEditTextModelBase {
      * @param inputConnection An {@link InputConnection} created by EditText.
      * @return A wrapper @{link InputConnection} created by the model.
      */
-    InputConnection onCreateInputConnection(InputConnection inputConnection);
+    @Nullable InputConnection onCreateInputConnection(@Nullable InputConnection inputConnection);
 
     /**
      * Called when View#dispatchKeyEvent(KeyEvent event) is called.
@@ -185,7 +195,7 @@ public interface AutocompleteEditTextModelBase {
      *     default match.
      */
     @VisibleForTesting
-    Optional<String> getAdditionalText();
+    @Nullable String getAdditionalText();
 
     /**
      * Sets whether text changes should trigger autocomplete.
@@ -202,11 +212,13 @@ public interface AutocompleteEditTextModelBase {
      * @param inlineAutocompleteText The suggested autocompletion for the user's text.
      * @param additionalText This string is displayed adjacent to the omnibox if this match is the
      *     default. Will usually be URL when autocompleting a title, and empty otherwise.
+     * @param siteSearchLabel The site search label to be shown.
      */
     void setAutocompleteText(
-            @NonNull CharSequence userText,
+            CharSequence userText,
             @Nullable CharSequence inlineAutocompleteText,
-            Optional<String> additionalText);
+            @Nullable String additionalText,
+            @Nullable String siteSearchLabel);
 
     /**
      * Whether we want to be showing inline autocomplete results. We don't want to show them as the
@@ -220,17 +232,22 @@ public interface AutocompleteEditTextModelBase {
     /**
      * @return Whether any autocomplete information is specified on the current text.
      */
-    @VisibleForTesting
     boolean hasAutocomplete();
 
     /**
      * @return The current {@link InputConnection} object.
      */
     @VisibleForTesting
-    InputConnection getInputConnection();
+    @Nullable InputConnection getInputConnection();
 
     /**
      * @return Whether accessibility event should be ignored.
      */
     boolean shouldIgnoreAccessibilityEvent();
+
+    /**
+     * Returns whether the given key event represents a delete-by-word gesture that should be
+     * intercepted and handled by the model.
+     */
+    boolean isDeleteByWord(KeyEvent event);
 }

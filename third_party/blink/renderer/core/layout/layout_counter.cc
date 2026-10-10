@@ -30,7 +30,6 @@
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/html/html_directory_element.h"
 #include "third_party/blink/renderer/core/html/html_menu_element.h"
 #include "third_party/blink/renderer/core/html/html_olist_element.h"
@@ -38,6 +37,7 @@
 #include "third_party/blink/renderer/core/html/list_item_ordinal.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
+#include "third_party/blink/renderer/core/style/list_style_type_data.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 
 #if DCHECK_IS_ON()
@@ -48,7 +48,8 @@ namespace blink {
 
 namespace {
 
-String GenerateCounterText(const CounterStyle* counter_style, int value) {
+String CounterTextFromStyleAndValue(const CounterStyle* counter_style,
+                                    int value) {
   if (!counter_style) {
     return g_empty_string;
   }
@@ -60,7 +61,7 @@ String GenerateCounterText(const CounterStyle* counter_style, int value) {
 LayoutCounter::LayoutCounter(Document& document,
                              const CounterContentData& counter)
     : LayoutText(nullptr, StringImpl::empty_), counter_(counter) {
-  SetDocumentForAnonymous(&document);
+  SetDocumentForAnonymous(document);
   View()->AddLayoutCounter();
 }
 
@@ -71,59 +72,85 @@ void LayoutCounter::Trace(Visitor* visitor) const {
   LayoutText::Trace(visitor);
 }
 
-void LayoutCounter::WillBeDestroyed() {
+void LayoutCounter::WillBeDestroyed(const ComputedStyle* style) {
   NOT_DESTROYED();
   if (View()) {
     View()->RemoveLayoutCounter();
   }
-  LayoutText::WillBeDestroyed();
+  LayoutText::WillBeDestroyed(style);
+}
+
+String LayoutCounter::GenerateCounterText(Vector<int> counter_values,
+                                          const CounterStyle* counter_style,
+                                          const AtomicString& separator) {
+  String text =
+      CounterTextFromStyleAndValue(counter_style, counter_values.front());
+  if (!separator.IsNull()) {
+    for (wtf_size_t i = 1u; i < counter_values.size(); ++i) {
+      text = StrCat(
+          {CounterTextFromStyleAndValue(counter_style, counter_values[i]),
+           separator, text});
+    }
+  }
+  return text;
 }
 
 void LayoutCounter::UpdateCounter(Vector<int> counter_values) {
   NOT_DESTROYED();
-  const CounterStyle* counter_style = NullableCounterStyle();
-  String text = GenerateCounterText(counter_style, counter_values.front());
-  if (!counter_->Separator().IsNull()) {
-    for (wtf_size_t i = 1u; i < counter_values.size(); ++i) {
-      text = GenerateCounterText(counter_style, counter_values[i]) +
-             counter_->Separator() + text;
-    }
-  }
-  SetTextIfNeeded(text);
+  SetTextIfNeeded(
+      GenerateCounterText(counter_values, NullableCounterStyle(), Separator()));
 }
 
 const CounterStyle* LayoutCounter::NullableCounterStyle() const {
+  NOT_DESTROYED();
   // Note: CSS3 spec doesn't allow 'none' but CSS2.1 allows it. We currently
   // allow it for backward compatibility.
   // See https://github.com/w3c/csswg-drafts/issues/5795 for details.
-  if (counter_->ListStyle() == "none") {
+  if (counter_->ListStyle() == keywords::kNone) {
     return nullptr;
   }
-  return &GetDocument().GetStyleEngine().FindCounterStyleAcrossScopes(
-      counter_->ListStyle(), counter_->GetTreeScope());
+  return &counter_->ResolveCounterStyle(GetDocument().GetStyleEngine());
 }
 
 bool LayoutCounter::IsDirectionalSymbolMarker() const {
+  NOT_DESTROYED();
   const auto* counter_style = NullableCounterStyle();
-  if (!counter_style || !counter_style->IsPredefinedSymbolMarker()) {
-    return false;
-  }
-  const AtomicString& list_style = counter_->ListStyle();
-  return list_style == keywords::kDisclosureOpen ||
-         list_style == keywords::kDisclosureClosed;
+  return counter_style && counter_style->IsDisclosureMarker();
 }
 
 const AtomicString& LayoutCounter::Separator() const {
+  NOT_DESTROYED();
   return counter_->Separator();
 }
 
 // static
-const AtomicString& LayoutCounter::ListStyle(const LayoutObject* object,
-                                             const ComputedStyle& style) {
+AtomicString LayoutCounter::ListStyle(const LayoutObject* object,
+                                      const ComputedStyle& style) {
+  // When the counter style resolves through `extends` to a predefined symbol
+  // marker, return that base name (e.g. `disclosure-open`) so callers paint the
+  // marker with the correct direction. Otherwise return the declared name.
   if (const auto* counter = DynamicTo<LayoutCounter>(object)) {
+    if (const CounterStyle* counter_style = counter->NullableCounterStyle()) {
+      const AtomicString symbol_marker =
+          counter_style->GetEffectiveSymbolMarkerName();
+      if (!symbol_marker.IsNull()) {
+        return symbol_marker;
+      }
+    }
     return counter->counter_->ListStyle();
   }
-  return style.ListStyleType()->GetCounterStyleName();
+  if (const ListStyleTypeData* list_style_type = style.ListStyleType()) {
+    if (object && list_style_type->IsCounterStyle()) {
+      const AtomicString symbol_marker =
+          list_style_type->GetCounterStyle(object->GetDocument())
+              .GetEffectiveSymbolMarkerName();
+      if (!symbol_marker.IsNull()) {
+        return symbol_marker;
+      }
+    }
+    return list_style_type->GetCounterStyleName();
+  }
+  return g_null_atom;
 }
 
 }  // namespace blink

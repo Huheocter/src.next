@@ -4,10 +4,15 @@
 
 #include "third_party/blink/renderer/core/paint/box_paint_invalidator.h"
 
+#include <ranges>
+
+#include "base/memory/values_equivalent.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
+#include "third_party/blink/renderer/core/layout/gap/gap_geometry.h"
 #include "third_party/blink/renderer/core/layout/ink_overflow.h"
 #include "third_party/blink/renderer/core/layout/layout_replaced.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
+#include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
 #include "third_party/blink/renderer/core/paint/object_paint_invalidator.h"
 #include "third_party/blink/renderer/core/paint/paint_invalidator.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
@@ -26,8 +31,9 @@ bool BoxPaintInvalidator::HasEffectiveBackground() {
 static bool ShouldFullyInvalidateFillLayersOnWidthChange(
     const FillLayer& layer) {
   // Nobody will use multiple layers without wanting fancy positioning.
-  if (layer.Next())
+  if (layer.NextForUsedValue()) {
     return true;
+  }
 
   // The layer properties checked below apply only when there is a valid image.
   const StyleImage* image = layer.GetImage();
@@ -71,8 +77,9 @@ static bool ShouldFullyInvalidateFillLayersOnWidthChange(
 static bool ShouldFullyInvalidateFillLayersOnHeightChange(
     const FillLayer& layer) {
   // Nobody will use multiple layers without wanting fancy positioning.
-  if (layer.Next())
+  if (layer.NextForUsedValue()) {
     return true;
+  }
 
   // The layer properties checked below apply only when there is a valid image.
   const StyleImage* image = layer.GetImage();
@@ -157,7 +164,8 @@ PaintInvalidationReason BoxPaintInvalidator::ComputePaintInvalidationReason() {
   // TODO(crbug.com/1205708): Audit this.
   InkOverflow::ReadUnsetAsNoneScope read_unset_as_none;
 #endif
-  if (box_.PreviousSize() == box_.Size() &&
+  PhysicalSize stitched_size = box_.StitchedSize();
+  if (box_.PreviousSize() == stitched_size &&
       box_.PreviousSelfVisualOverflowRect() == box_.SelfVisualOverflowRect()) {
     return IsFullPaintInvalidationReason(reason)
                ? reason
@@ -166,7 +174,7 @@ PaintInvalidationReason BoxPaintInvalidator::ComputePaintInvalidationReason() {
 
   // Incremental invalidation is not applicable if there is visual overflow.
   if (box_.PreviousSelfVisualOverflowRect().size != box_.PreviousSize() ||
-      box_.SelfVisualOverflowRect().size != box_.Size()) {
+      box_.SelfVisualOverflowRect().size != stitched_size) {
     return PaintInvalidationReason::kLayout;
   }
 
@@ -174,15 +182,17 @@ PaintInvalidationReason BoxPaintInvalidator::ComputePaintInvalidationReason() {
   // fraction.
   if (context_.old_paint_offset.HasFraction() ||
       context_.fragment_data->PaintOffset().HasFraction() ||
-      box_.PreviousSize().HasFraction() || box_.Size().HasFraction()) {
+      box_.PreviousSize().HasFraction() || stitched_size.HasFraction()) {
     return PaintInvalidationReason::kLayout;
   }
 
   // Incremental invalidation is not applicable if there is border in the
   // direction of border box size change because we don't know the border
   // width when issuing incremental raster invalidations.
-  if (box_.BorderRight() || box_.BorderBottom())
+  const PhysicalBoxStrut borders = box_.BorderOutsets();
+  if (borders.right || borders.bottom) {
     return PaintInvalidationReason::kLayout;
+  }
 
   if (style.HasVisualOverflowingEffect() || style.HasEffectiveAppearance() ||
       style.HasFilterInducingProperty() || style.HasMask() ||
@@ -280,7 +290,7 @@ BoxPaintInvalidator::ComputeViewBackgroundInvalidation() {
         const auto& background_layers = box_.StyleRef().BackgroundLayers();
         if (ShouldFullyInvalidateFillLayersOnSizeChange(
                 background_layers, root_box->PreviousSize(),
-                root_box->Size())) {
+                root_box->StitchedSize())) {
           return BackgroundInvalidationType::kFull;
         }
         if (BackgroundGeometryDependsOnScrollableOverflowRect() &&
@@ -315,9 +325,13 @@ BoxPaintInvalidator::ComputeBackgroundInvalidation(
     bool& should_invalidate_all_layers) {
   // If background changed, we may paint the background on different graphics
   // layer, so we need to fully invalidate the background on all layers.
+  //
+  // Gap decoration geometry may change independently of the background, so it
+  // may also require full invalidation on all layers.
   if (box_.BackgroundNeedsFullPaintInvalidation() ||
       (context_.subtree_flags &
-       PaintInvalidatorContext::kSubtreeFullInvalidation)) {
+       PaintInvalidatorContext::kSubtreeFullInvalidation) ||
+      ShouldInvalidateGapDecorations()) {
     should_invalidate_all_layers = true;
     return BackgroundInvalidationType::kFull;
   }
@@ -328,7 +342,7 @@ BoxPaintInvalidator::ComputeBackgroundInvalidation(
   const auto& background_layers = box_.StyleRef().BackgroundLayers();
   if (background_layers.AnyLayerHasDefaultAttachmentImage() &&
       ShouldFullyInvalidateFillLayersOnSizeChange(
-          background_layers, box_.PreviousSize(), box_.Size())) {
+          background_layers, box_.PreviousSize(), box_.StitchedSize())) {
     return BackgroundInvalidationType::kFull;
   }
 
@@ -426,7 +440,7 @@ bool BoxPaintInvalidator::NeedsToSavePreviousContentBoxRect() {
   // crbug.com/490533
   if ((style.BackgroundLayers().AnyLayerUsesContentBox() ||
        style.MaskLayers().AnyLayerUsesContentBox()) &&
-      box_.ContentSize() != box_.Size()) {
+      box_.PhysicalContentBoxRect().size != box_.StitchedSize()) {
     return true;
   }
 
@@ -452,6 +466,51 @@ bool BoxPaintInvalidator::NeedsToSavePreviousOverflowData() {
   return false;
 }
 
+bool BoxPaintInvalidator::NeedsToSavePreviousGapGeometries() {
+  if (!box_.StyleRef().IsGapDecorationsContainer() ||
+      !box_.StyleRef().HasGapRule()) {
+    return false;
+  }
+  for (const PhysicalBoxFragment& fragment : box_.PhysicalFragments()) {
+    if (fragment.GetGapGeometry()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool BoxPaintInvalidator::ShouldInvalidateGapDecorations() const {
+  if (!box_.StyleRef().IsGapDecorationsContainer() ||
+      !box_.StyleRef().HasGapRule()) {
+    return false;
+  }
+
+  const auto* previous = box_.PreviousGapGeometries();
+
+  // If there's no previous gap geometry, nothing to do.
+  if (!previous) {
+    return false;
+  }
+
+  // Compare previous vs current gap geometries. The previous vector is indexed
+  // by fragment position (including nullptr entries for fragments without gap
+  // geometry), so each fragment's previous geometry is compared against the
+  // same fragment's current geometry.
+  if (previous->size() != box_.PhysicalFragmentCount()) {
+    // Different fragment count means gap geometry may have changed.
+    return true;
+  }
+  auto fragments = box_.PhysicalFragments();
+  for (const auto [previous_geometry, fragment] :
+       std::views::zip(*previous, fragments)) {
+    if (!base::ValuesEquivalent(previous_geometry.Get(),
+                                fragment.GetGapGeometry())) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void BoxPaintInvalidator::SavePreviousBoxGeometriesIfNeeded() {
   auto mutable_box = box_.GetMutableForPainting();
   mutable_box.SavePreviousSize();
@@ -469,6 +528,12 @@ void BoxPaintInvalidator::SavePreviousBoxGeometriesIfNeeded() {
     mutable_box.SavePreviousContentBoxRect();
   else
     mutable_box.ClearPreviousContentBoxRect();
+
+  if (NeedsToSavePreviousGapGeometries()) {
+    mutable_box.SavePreviousGapGeometries();
+  } else {
+    mutable_box.ClearPreviousGapGeometries();
+  }
 }
 
 }  // namespace blink

@@ -9,30 +9,31 @@ import android.graphics.Canvas;
 import android.graphics.Region.Op;
 import android.view.View;
 
-import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.recyclerview.widget.RecyclerView.ItemDecoration;
 import androidx.recyclerview.widget.RecyclerView.State;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.omnibox.R;
 import org.chromium.ui.modelutil.SimpleRecyclerViewAdapter;
 import org.chromium.ui.modelutil.SimpleRecyclerViewAdapter.ViewHolder;
 
 /**
  * Horizontal divider item decoration that clips the bottom of items with a rect of height 1dp. Only
- * clips for items with an associated property model with DropdownCommonProperties.SHOW_DIVIDER ==
+ * clips for items with an associated property model with SuggestionCommonProperties.SHOW_DIVIDER ==
  * true.
  */
+@NullMarked
 public class SuggestionHorizontalDivider extends ItemDecoration {
     private final int mHeight;
 
-    public SuggestionHorizontalDivider(@NonNull Context context) {
+    public SuggestionHorizontalDivider(Context context) {
         mHeight = context.getResources().getDimensionPixelSize(R.dimen.divider_height);
     }
 
     @Override
-    public void onDraw(@NonNull Canvas canvas, @NonNull RecyclerView parent, @NonNull State state) {
+    public void onDraw(Canvas canvas, RecyclerView parent, State state) {
         int childCount = parent.getChildCount();
 
         for (int i = 0; i < childCount; ++i) {
@@ -50,13 +51,14 @@ public class SuggestionHorizontalDivider extends ItemDecoration {
     }
 
     @VisibleForTesting
-    boolean shouldDrawDivider(@NonNull View view, @NonNull RecyclerView parent) {
+    boolean shouldDrawDivider(View view, RecyclerView parent) {
         RecyclerView.ViewHolder viewHolder = parent.getChildViewHolder(view);
         if (!(viewHolder instanceof SimpleRecyclerViewAdapter.ViewHolder)) {
             return false;
         }
         SimpleRecyclerViewAdapter.ViewHolder simpleRecyclerViewHolder =
                 (ViewHolder) parent.getChildViewHolder(view);
-        return simpleRecyclerViewHolder.model.get(DropdownCommonProperties.SHOW_DIVIDER);
+        var model = simpleRecyclerViewHolder.model;
+        return model != null && model.get(SuggestionCommonProperties.SHOW_DIVIDER);
     }
 }

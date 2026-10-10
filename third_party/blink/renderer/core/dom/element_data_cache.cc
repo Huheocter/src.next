@@ -24,47 +24,52 @@
  *
  */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/core/dom/element_data_cache.h"
 
+#include "base/compiler_specific.h"
 #include "third_party/blink/renderer/core/dom/element_data.h"
+#include "third_party/blink/renderer/platform/wtf/hash_functions_memory.h"
 
 namespace blink {
 
-inline unsigned AttributeHash(
+inline uint32_t AttributeHash(
     const Vector<Attribute, kAttributePrealloc>& attributes) {
-  return StringHasher::HashMemory(base::as_byte_span(attributes));
+  return HashMemory32(base::as_byte_span(attributes));
 }
 
 inline bool HasSameAttributes(
     const Vector<Attribute, kAttributePrealloc>& attributes,
     ShareableElementData& element_data) {
-  return std::equal(
-      attributes.begin(), attributes.end(), element_data.attribute_array_,
-      element_data.attribute_array_ + element_data.Attributes().size());
+  return std::ranges::equal(attributes, element_data.AttributesSpan());
 }
 
 ShareableElementData*
 ElementDataCache::CachedShareableElementDataWithAttributes(
+    const StringImpl* tag_name,
     const Vector<Attribute, kAttributePrealloc>& attributes) {
+  uint32_t hash = HashInts(tag_name->GetHash(), AttributeHash(attributes));
+  return CachedElementData(tag_name, attributes, hash);
+}
+
+ShareableElementData* ElementDataCache::CachedElementData(
+    const StringImpl* tag_name,
+    const Vector<Attribute, kAttributePrealloc>& attributes,
+    uint32_t hash) {
   DCHECK(!attributes.empty());
 
+  hash = EnsureValidHash(hash);
   ShareableElementDataCache::ValueType* it =
-      shareable_element_data_cache_.insert(AttributeHash(attributes), nullptr)
+      shareable_element_data_cache_.insert(hash, std::pair(nullptr, nullptr))
           .stored_value;
 
   // FIXME: This prevents sharing when there's a hash collision.
-  if (it->value && !HasSameAttributes(attributes, *it->value))
-    return ShareableElementData::CreateWithAttributes(attributes);
+  if (it->value.second == nullptr || it->value.first != tag_name ||
+      !HasSameAttributes(attributes, *it->value.second)) {
+    it->value.first = tag_name;
+    it->value.second = ShareableElementData::CreateWithAttributes(attributes);
+  }
 
-  if (!it->value)
-    it->value = ShareableElementData::CreateWithAttributes(attributes);
-
-  return it->value.Get();
+  return it->value.second.Get();
 }
 
 ElementDataCache::ElementDataCache() = default;

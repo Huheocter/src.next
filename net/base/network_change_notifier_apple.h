@@ -20,6 +20,7 @@
 #include "build/build_config.h"
 #include "net/base/net_export.h"
 #include "net/base/network_change_notifier.h"
+#include "net/base/network_change_notifier_apple_buildflags.h"
 #include "net/base/network_config_watcher_apple.h"
 #include "net/base/network_interfaces.h"
 #include "net/log/net_log_with_source.h"
@@ -60,9 +61,14 @@ class NET_EXPORT_PRIVATE NetworkChangeNotifierApple
 
  private:
   friend class NetworkChangeNotifierAppleTest;
+#if BUILDFLAG(IS_MAC)
+  friend class NetworkChangeNotifierApplePathMonitorTest;
+#endif
 
+#if defined(COMPILE_OLD_NOTIFIER_IMPL)
   // Called on the main thread on startup, afterwards on the notifier thread.
   static ConnectionType CalculateConnectionType(SCNetworkConnectionFlags flags);
+#endif  // defined(COMPILE_OLD_NOTIFIER_IMPL)
 
   // Methods directly called by the NetworkConfigWatcherApple::Delegate:
   void StartReachabilityNotifications();
@@ -73,13 +79,23 @@ class NET_EXPORT_PRIVATE NetworkChangeNotifierApple
 
   void SetInitialConnectionType();
 
+#if defined(COMPILE_OLD_NOTIFIER_IMPL)
   static void ReachabilityCallback(SCNetworkReachabilityRef target,
                                    SCNetworkConnectionFlags flags,
                                    void* notifier);
+#endif  // defined(COMPILE_OLD_NOTIFIER_IMPL)
 
   static NetworkChangeCalculatorParams NetworkChangeCalculatorParamsMac();
 
-#if BUILDFLAG(IS_MAC)
+  struct NetworkPathMonitorStorage;
+
+  bool ShouldUseNetworkPathMonitor() const;
+  bool EnsureNetworkPathMonitorStarted();
+  void StopNetworkPathMonitor();
+  void OnNetworkPathConnectionTypeChanged(ConnectionType new_type);
+  void ProcessConnectionTypeUpdate(ConnectionType new_type, bool should_notify);
+  void WaitOnInitialConnectionType();
+
   void SetCallbacksForTest(
       base::OnceClosure initialized_callback,
       base::RepeatingCallback<bool(NetworkInterfaceList*, int)>
@@ -88,7 +104,6 @@ class NET_EXPORT_PRIVATE NetworkChangeNotifierApple
           get_ipv4_primary_interface_name_callback,
       base::RepeatingCallback<std::string(SCDynamicStoreRef)>
           get_ipv6_primary_interface_name_callback);
-#endif  // BUILDFLAG(IS_MAC)
 
   // These must be constructed before config_watcher_ to ensure
   // the lock is in a valid state when Forwarder::Init is called.
@@ -102,8 +117,7 @@ class NET_EXPORT_PRIVATE NetworkChangeNotifierApple
   Forwarder forwarder_;
   std::unique_ptr<NetworkConfigWatcherApple> config_watcher_;
 
-#if BUILDFLAG(IS_MAC)
-  const bool reduce_ip_address_change_notification_;
+  std::unique_ptr<NetworkPathMonitorStorage> network_path_monitor_;
   base::apple::ScopedCFTypeRef<SCDynamicStoreRef> store_;
   std::optional<NetworkInterfaceList> interfaces_for_network_change_check_;
   std::string ipv4_primary_interface_name_;
@@ -116,7 +130,6 @@ class NET_EXPORT_PRIVATE NetworkChangeNotifierApple
       get_ipv4_primary_interface_name_callback_;
   base::RepeatingCallback<std::string(SCDynamicStoreRef)>
       get_ipv6_primary_interface_name_callback_;
-#endif  // BUILDFLAG(IS_MAC)
   NetLogWithSource net_log_;
 };
 

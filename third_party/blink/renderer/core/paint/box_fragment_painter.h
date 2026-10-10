@@ -14,6 +14,7 @@
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
 #include "third_party/blink/renderer/core/paint/box_painter_base.h"
 #include "third_party/blink/renderer/core/paint/inline_paint_context.h"
+#include "third_party/blink/renderer/platform/graphics/paint/display_item.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
@@ -27,6 +28,7 @@ class InlineBackwardCursor;
 class InlineBoxFragmentPainter;
 class InlineCursor;
 class PhysicalFragment;
+class ScopedBoxContentsPaintState;
 class ScopedPaintState;
 struct PaintInfo;
 
@@ -42,6 +44,20 @@ class CORE_EXPORT BoxFragmentPainter : public BoxPainterBase {
                      const FragmentItem& item,
                      const PhysicalBoxFragment& fragment,
                      InlinePaintContext* inline_context);
+
+  // Paints a highlight overlay for elements identified as ads. This supports
+  // the "Highlight ads" feature in DevTools.
+  static void PaintAdHighlightIfNeeded(
+      const PaintInfo& paint_info,
+      const PhysicalOffset& paint_offset,
+      const PhysicalBoxFragment& fragment,
+      const DisplayItemClient& display_item_client,
+      PaintPhase phase);
+
+  // Paint a fragment. This normally just creates a BoxFragmentPainter and calls
+  // Paint(), but certain object types require custom painters (such as replaced
+  // content).
+  static void PaintFragment(const PhysicalBoxFragment&, const PaintInfo&);
 
   void Paint(const PaintInfo&);
   // Routes single PaintPhase to actual painters, and traverses children.
@@ -73,12 +89,15 @@ class CORE_EXPORT BoxFragmentPainter : public BoxPainterBase {
 
   gfx::Rect VisualRect(const PhysicalOffset& paint_offset);
 
+  gfx::Vector2d PixelSnappedScrollOffset() const;
+
  protected:
   BoxPainterBase::FillLayerInfo GetFillLayerInfo(
       const Color&,
       const FillLayer&,
       BackgroundBleedAvoidance,
-      bool is_painting_background_in_contents_space) const override;
+      bool is_painting_background_in_contents_space,
+      PaintFlags paint_flags) const override;
 
   void PaintTextClipMask(const PaintInfo&,
                          const gfx::Rect& mask_rect,
@@ -90,6 +109,9 @@ class CORE_EXPORT BoxFragmentPainter : public BoxPainterBase {
   PhysicalRect AdjustRectForScrolledContent(GraphicsContext&,
                                             const PhysicalBoxStrut& borders,
                                             const PhysicalRect&) const override;
+  Node* ImageGeneratingNode() const override {
+    return box_fragment_.GeneratingNode();
+  }
 
  private:
   BoxFragmentPainter(const PhysicalBoxFragment&,
@@ -127,8 +149,6 @@ class CORE_EXPORT BoxFragmentPainter : public BoxPainterBase {
       InlineCursor* children,
       const PaintInfo&,
       const PhysicalOffset& paint_offset);
-
-  void PaintColumnRules(const PaintInfo&, const PhysicalOffset& paint_offset);
 
   void PaintInternal(const PaintInfo&);
   void PaintAllPhasesAtomically(const PaintInfo&);
@@ -169,7 +189,7 @@ class CORE_EXPORT BoxFragmentPainter : public BoxPainterBase {
                     const PhysicalOffset& paint_offset,
                     const PhysicalOffset& parent_offset);
   void PaintFloatingItems(const PaintInfo& paint_info, InlineCursor* cursor);
-  void PaintFloatingChildren(const PhysicalFragment&,
+  void PaintFloatingChildren(const PhysicalBoxFragment&,
                              const PaintInfo& paint_info);
   void PaintFloats(const PaintInfo&);
   void PaintMask(const PaintInfo&, const PhysicalOffset& paint_offset);
@@ -182,6 +202,11 @@ class CORE_EXPORT BoxFragmentPainter : public BoxPainterBase {
                            const PhysicalOffset& paint_offset);
   bool PaintOverflowControls(const PaintInfo&,
                              const PhysicalOffset& paint_offset);
+  void PaintGapDecorations(
+      const PaintInfo&,
+      const PhysicalOffset& paint_offset,
+      const DisplayItemClient* background_client,
+      const std::optional<ScopedBoxContentsPaintState>& contents_paint_state);
 
   InlinePaintContext& EnsureInlineContext();
 
@@ -191,6 +216,12 @@ class CORE_EXPORT BoxFragmentPainter : public BoxPainterBase {
                                const DisplayItemClient& background_client);
 
   bool ShouldRecordHitTestData(const PaintInfo&);
+
+  static void RecordRegionCaptureAndTrackedElementData(
+      Element* element,
+      const PaintInfo& paint_info,
+      const PhysicalRect& paint_rect,
+      const DisplayItemClient& display_item_client);
 
   // This struct has common data needed while traversing trees for the hit
   // testing.
@@ -247,7 +278,7 @@ class CORE_EXPORT BoxFragmentPainter : public BoxPainterBase {
                             const PhysicalBoxFragment& container,
                             const InlineCursor& children);
   bool HitTestFloatingChildren(const HitTestContext& hit_test,
-                               const PhysicalFragment& container,
+                               const PhysicalBoxFragment& container,
                                const PhysicalOffset& accumulated_offset);
   bool HitTestFloatingChildItems(const HitTestContext& hit_test,
                                  const InlineCursor& children,
@@ -304,6 +335,10 @@ class CORE_EXPORT BoxFragmentPainter : public BoxPainterBase {
 
   static bool ShouldHitTestCulledInlineAncestors(const HitTestContext& hit_test,
                                                  const FragmentItem& item);
+
+  // Returns the total offset of all overscroll area parents. This is used to
+  // shift content which is not within an overscroll area.
+  gfx::Vector2d PixelSnappedOverscrollOffset() const;
 
   const PhysicalBoxFragment& box_fragment_;
   const DisplayItemClient& display_item_client_;

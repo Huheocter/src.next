@@ -7,6 +7,7 @@
 
 #include <optional>
 
+#include "base/memory/raw_ptr.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "third_party/blink/renderer/core/core_export.h"
@@ -87,7 +88,7 @@ class CORE_EXPORT InteractiveDetector
   // pointer down followed by a pointer up.
   std::optional<base::TimeDelta> GetFirstInputDelay() const;
 
-  WTF::Vector<std::optional<base::TimeDelta>>
+  Vector<std::optional<base::TimeDelta>>
   GetFirstInputDelaysAfterBackForwardCacheRestore() const;
 
   // The timestamp of the event whose delay is reported by GetFirstInputDelay().
@@ -128,7 +129,8 @@ class CORE_EXPORT InteractiveDetector
  private:
   friend class InteractiveDetectorTest;
 
-  const base::TickClock* clock_;
+  raw_ptr<const base::TickClock, UnprotectedInRelease | DanglingUntriaged>
+      clock_;
 
   base::TimeTicks interactive_time_;
   base::TimeTicks interactive_detection_time_;
@@ -148,7 +150,7 @@ class CORE_EXPORT InteractiveDetector
     std::optional<base::TimeTicks> first_scroll_timestamp;
     std::optional<base::TimeDelta> frist_scroll_delay;
 
-    WTF::Vector<std::optional<base::TimeDelta>>
+    Vector<std::optional<base::TimeDelta>>
         first_input_delays_after_back_forward_cache_restore;
   } page_event_times_;
 
@@ -158,11 +160,11 @@ class CORE_EXPORT InteractiveDetector
   };
 
   // Stores sufficiently long quiet windows on the network.
-  Vector<WTF::PODInterval<base::TimeTicks>> network_quiet_windows_;
+  Vector<PodInterval<base::TimeTicks>> network_quiet_windows_;
 
   // Stores long tasks in order to compute Total Blocking Time (TBT) once Time
   // To Interactive (TTI) is known.
-  Vector<WTF::PODInterval<base::TimeTicks>> long_tasks_;
+  Vector<PodInterval<base::TimeTicks>> long_tasks_;
 
   // Start time of currently active network quiet windows.
   // Null base::TimeTicks values indicate network is not quiet at the moment.

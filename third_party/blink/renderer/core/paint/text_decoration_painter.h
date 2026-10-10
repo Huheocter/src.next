@@ -10,6 +10,7 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/paint/highlight_painter.h"
 #include "third_party/blink/renderer/core/paint/text_decoration_info.h"
+#include "third_party/blink/renderer/core/paint/text_shadow_painter.h"
 
 namespace blink {
 
@@ -44,7 +45,8 @@ class CORE_EXPORT TextDecorationPainter {
       const ComputedStyle& style,
       const TextPaintStyle& text_style,
       const LineRelativeRect& decoration_rect,
-      HighlightPainter::SelectionPaintState* selection);
+      HighlightPainter::SelectionPaintState* selection,
+      TextDecorationFragmentContext fragment_context);
   ~TextDecorationPainter();
 
   // Sets the given optional to a new TextDecorationInfo with the decorations
@@ -69,6 +71,9 @@ class CORE_EXPORT TextDecorationPainter {
   void PaintOnlyLineThrough(TextDecorationInfo&, const TextPaintStyle&);
 
   const InlinePaintContext* InlineContext() const { return inline_context_; }
+  const TextDecorationFragmentContext& FragmentContext() const {
+    return fragment_context_;
+  }
 
   // Expand a rect to be suitable for clipping without affecting
   // decorations. This is currently an approximation only used for SVG
@@ -78,6 +83,10 @@ class CORE_EXPORT TextDecorationPainter {
  private:
   enum Step { kBegin, kExcept, kOnly };
   void ClipIfNeeded(GraphicsContextStateSaver&);
+
+  Color LineColorForPhase(TextDecorationInfo& decoration_info,
+                          const ResolvedDecoration& decoration,
+                          TextShadowPaintPhase text_shadow_paint_phase) const;
 
   void PaintUnderOrOverLineDecorations(TextDecorationInfo&,
                                        const TextFragmentPaintInfo&,
@@ -92,6 +101,7 @@ class CORE_EXPORT TextDecorationPainter {
   const TextPaintStyle& text_style_;
   const LineRelativeRect& decoration_rect_;
   HighlightPainter::SelectionPaintState* selection_;
+  const TextDecorationFragmentContext fragment_context_;
 
   Step step_;
   Phase phase_;

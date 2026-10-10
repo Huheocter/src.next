@@ -6,11 +6,15 @@
 #define CHROME_BROWSER_UI_BROWSER_ACTIONS_H_
 
 #include <memory>
+#include <string>
 
-#include "base/callback_list.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
+#include "ui/base/unowned_user_data/scoped_unowned_user_data.h"
 
-class Browser;
 class BrowserActionPrefsListener;
+class BrowserWindowInterface;
+class Profile;
 
 namespace actions {
 class ActionItem;
@@ -19,7 +23,12 @@ class ActionItem;
 // Actions that a user can take that are scoped to a browser window.
 class BrowserActions {
  public:
-  explicit BrowserActions(Browser& browser);
+  DECLARE_USER_DATA(BrowserActions);
+
+  static BrowserActions* From(BrowserWindowInterface* browser);
+  static const BrowserActions* From(const BrowserWindowInterface* browser);
+
+  explicit BrowserActions(BrowserWindowInterface* bwi);
   BrowserActions(const BrowserActions&) = delete;
   BrowserActions& operator=(const BrowserActions&) = delete;
   ~BrowserActions();
@@ -31,16 +40,32 @@ class BrowserActions {
   // Initialization is separate from construction to allow more precise timing.
   void InitializeBrowserActions();
 
-  void RemoveListeners();
+  // Registers a window-scoped action item.
+  actions::ActionItem* RegisterAction(
+      std::unique_ptr<actions::ActionItem> action_item);
+
+  void set_root_action_item_for_testing(actions::ActionItem* item) {
+    root_action_item_ = item;
+  }
 
  private:
+  // Helper functions to initialize actions grouped roughly by their type.
+  void InitializeSidePanelActions();
+  void InitializePageActionIconActions();
+  void InitializeChromeMenuActions();
+  void InitializeToolbarAndMiscActions();
+  void InitializeNavigationActions();
+  void InitializeSubmenuActions();
+
   // Creates all the listeners for the action items that update different states
   // and property of the action item.
   void AddListeners();
 
   raw_ptr<actions::ActionItem> root_action_item_ = nullptr;
   std::unique_ptr<BrowserActionPrefsListener> browser_action_prefs_listener_;
-  const raw_ref<Browser> browser_;
+  const raw_ref<BrowserWindowInterface> bwi_;
+  const raw_ref<Profile> profile_;
+  ui::ScopedUnownedUserData<BrowserActions> scoped_unowned_user_data_;
 };
 
 #endif  // CHROME_BROWSER_UI_BROWSER_ACTIONS_H_

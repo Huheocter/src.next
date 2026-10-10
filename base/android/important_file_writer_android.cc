@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/threading/thread_restrictions.h"
 
@@ -18,18 +19,21 @@ namespace android {
 class ScopedAllowBlockingForImportantFileWriter
     : public base::ScopedAllowBlocking {};
 
-static jboolean JNI_ImportantFileWriterAndroid_WriteFileAtomically(
+static bool JNI_ImportantFileWriterAndroid_WriteFileAtomically(
     JNIEnv* env,
-    std::string& native_file_name,
-    jni_zero::ByteArrayView& data) {
+    const std::string& native_file_name,
+    const JavaRef<JArray<int8_t>>& data) {
+  std::string byte_str;
+  JavaByteArrayToString(env, data, &byte_str);
   // This is called on the UI thread during shutdown to save tab data, so
   // needs to enable IO.
   ScopedAllowBlockingForImportantFileWriter allow_blocking;
   base::FilePath path(native_file_name);
-  bool result =
-      base::ImportantFileWriter::WriteFileAtomically(path, data.string_view());
+  bool result = base::ImportantFileWriter::WriteFileAtomically(path, byte_str);
   return result;
 }
 
 }  // namespace android
 }  // namespace base
+
+DEFINE_JNI(ImportantFileWriterAndroid)

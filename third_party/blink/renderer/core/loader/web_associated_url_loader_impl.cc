@@ -36,6 +36,7 @@
 #include <utility>
 
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "services/network/public/cpp/request_destination.h"
@@ -154,8 +155,11 @@ class WebAssociatedURLLoaderImpl::ClientAdapter final
  private:
   void NotifyError(TimerBase*);
 
-  WebAssociatedURLLoaderImpl* loader_;
-  WebAssociatedURLLoaderClient* client_;
+  raw_ptr<WebAssociatedURLLoaderImpl, UnprotectedInRelease | DanglingUntriaged>
+      loader_;
+  raw_ptr<WebAssociatedURLLoaderClient,
+          UnprotectedInRelease | DanglingUntriaged>
+      client_;
   WebAssociatedURLLoaderOptions options_;
   network::mojom::RequestMode request_mode_;
   network::mojom::CredentialsMode credentials_mode_;
@@ -241,7 +245,7 @@ void WebAssociatedURLLoaderImpl::ClientAdapter::DidReceiveResponse(
   // If there are blocked headers, copy the response so we can remove them.
   WebURLResponse validated_response = WrappedResourceResponse(response);
   for (const auto& header : blocked_headers)
-    validated_response.ClearHttpHeaderField(WebString::FromASCII(header));
+    validated_response.ClearHttpHeaderField(WebString::FromAscii(header));
   client_->DidReceiveResponse(validated_response);
 }
 
@@ -289,7 +293,7 @@ void WebAssociatedURLLoaderImpl::ClientAdapter::DidFail(
 
 void WebAssociatedURLLoaderImpl::ClientAdapter::DidFailRedirectCheck(
     uint64_t identifier) {
-  DidFail(identifier, ResourceError::Failure(NullURL()));
+  DidFail(identifier, ResourceError::Failure(NullUrl()));
 }
 
 void WebAssociatedURLLoaderImpl::ClientAdapter::EnableErrorNotifications() {
@@ -338,7 +342,8 @@ class WebAssociatedURLLoaderImpl::Observer final
     ExecutionContextLifecycleObserver::Trace(visitor);
   }
 
-  WebAssociatedURLLoaderImpl* parent_;
+  raw_ptr<WebAssociatedURLLoaderImpl, UnprotectedInRelease | DanglingUntriaged>
+      parent_;
 };
 
 WebAssociatedURLLoaderImpl::WebAssociatedURLLoaderImpl(
@@ -364,7 +369,7 @@ void WebAssociatedURLLoaderImpl::LoadAsynchronously(
 
   if (!observer_) {
     ReleaseClient()->DidFail(
-        WebURLError(ResourceError::CancelledError(KURL())));
+        WebURLError(ResourceError::CancelledError(NullUrl())));
     return;
   }
 
@@ -496,7 +501,8 @@ void WebAssociatedURLLoaderImpl::ContextDestroyed() {
   if (!client_)
     return;
 
-  ReleaseClient()->DidFail(WebURLError(ResourceError::CancelledError(KURL())));
+  ReleaseClient()->DidFail(
+      WebURLError(ResourceError::CancelledError(NullUrl())));
   // |this| may be dead here.
 }
 

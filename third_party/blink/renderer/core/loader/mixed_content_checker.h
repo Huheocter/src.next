@@ -94,10 +94,17 @@ class CORE_EXPORT MixedContentChecker final {
                                        ReportingDisposition,
                                        bool is_worklet_global_scope);
 
-  static bool IsWebSocketAllowed(const FrameFetchContext&,
-                                 LocalFrame*,
-                                 const KURL&);
-  static bool IsWebSocketAllowed(WorkerFetchContext&, const KURL&);
+  static bool IsWebSocketAllowed(
+      const FrameFetchContext&,
+      LocalFrame*,
+      const KURL&,
+      network::mojom::blink::IPAddressSpace target_address_space =
+          network::mojom::blink::IPAddressSpace::kUnknown);
+  static bool IsWebSocketAllowed(
+      WorkerFetchContext&,
+      const KURL&,
+      network::mojom::blink::IPAddressSpace target_address_space =
+          network::mojom::blink::IPAddressSpace::kUnknown);
 
   static bool IsMixedContent(const SecurityOrigin*, const KURL&);
   static bool IsMixedContent(const String& origin_protocol, const KURL&);
@@ -112,7 +119,8 @@ class CORE_EXPORT MixedContentChecker final {
       mojom::blink::RequestContextType type,
       WebContentSettingsClient* settings_client,
       const ResourceRequest& resource_request,
-      ExecutionContext* execution_context_for_logging);
+      ExecutionContext* execution_context_for_logging,
+      LocalFrame* frame);
 
   static mojom::blink::MixedContentContextType ContextTypeForInspector(
       LocalFrame*,
@@ -132,13 +140,18 @@ class CORE_EXPORT MixedContentChecker final {
                                 bool was_allowed,
                                 const KURL& url_before_redirects,
                                 bool had_redirect,
-                                std::unique_ptr<SourceLocation>);
+                                SourceLocation*);
 
   static ConsoleMessage* CreateConsoleMessageAboutFetchAutoupgrade(
       const KURL& main_resource_url,
       const KURL& mixed_content_url);
 
   static ConsoleMessage* CreateConsoleMessageAboutFetchIPAddressNoAutoupgrade(
+      const KURL& main_resource_url,
+      const KURL& mixed_content_url);
+
+  static ConsoleMessage*
+  CreateConsoleMessageAboutFetchLocalNetworkNoAutoupgrade(
       const KURL& main_resource_url,
       const KURL& mixed_content_url);
 
@@ -152,7 +165,8 @@ class CORE_EXPORT MixedContentChecker final {
       const FetchClientSettingsObject* fetch_client_settings_object,
       ExecutionContext* execution_context_for_logging,
       mojom::RequestContextFrameType,
-      WebContentSettingsClient* settings_client);
+      WebContentSettingsClient* settings_client,
+      LocalFrame* frame);
 
   static MixedContent::CheckModeForPlugin DecideCheckModeForPlugin(Settings*);
 
@@ -162,6 +176,8 @@ class CORE_EXPORT MixedContentChecker final {
  private:
   FRIEND_TEST_ALL_PREFIXES(MixedContentCheckerTest, HandleCertificateError);
 
+  static bool IsMixedContentRestrictedInFrameContext(LocalFrame* frame);
+
   static Frame* InWhichFrameIsContentMixed(LocalFrame*, const KURL&);
 
   static ConsoleMessage* CreateConsoleMessageAboutFetch(
@@ -169,7 +185,7 @@ class CORE_EXPORT MixedContentChecker final {
       const KURL&,
       mojom::blink::RequestContextType,
       bool allowed,
-      std::unique_ptr<SourceLocation>);
+      SourceLocation*);
   static ConsoleMessage* CreateConsoleMessageAboutWebSocket(const KURL&,
                                                             const KURL&,
                                                             bool allowed);

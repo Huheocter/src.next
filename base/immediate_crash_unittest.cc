@@ -2,27 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "base/immediate_crash.h"
 
 #include <stdint.h>
 
+#include <algorithm>
+#include <array>
 #include <optional>
 
 #include "base/base_paths.h"
+#include "base/check_op.h"
 #include "base/clang_profiling_buildflags.h"
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/path_service.h"
-#include "base/ranges/algorithm.h"
 #include "base/scoped_native_library.h"
 #include "base/strings/string_number_conversions.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
@@ -50,8 +49,8 @@ using Instruction = uint8_t;
 constexpr Instruction kRet = 0xc3;
 // INT3 ; UD2
 
-constexpr Instruction kRequiredBody[] = {0xcc, 0x0f, 0x0b};
-constexpr Instruction kOptionalFooter[] = {};
+constexpr auto kRequiredBody = std::to_array<Instruction>({0xcc, 0x0f, 0x0b});
+constexpr auto kOptionalFooter = std::array<Instruction, 0u>{};
 #endif  // defined(OFFICIAL_BUILD)
 
 #elif defined(ARCH_CPU_ARMEL)
@@ -63,8 +62,8 @@ using Instruction = uint16_t;
 constexpr Instruction kRet = 0x4770;
 
 // BKPT #0; UDF #0
-constexpr Instruction kRequiredBody[] = {0xbe00, 0xde00};
-constexpr Instruction kOptionalFooter[] = {};
+constexpr auto kRequiredBody = std::to_array<Instruction>({0xbe00, 0xde00});
+constexpr auto kOptionalFooter = std::array<Instruction, 0u>{};
 #endif  // defined(OFFICIAL_BUILD)
 
 #elif defined(ARCH_CPU_ARM64)
@@ -87,20 +86,20 @@ enum : Instruction {
 
 #if BUILDFLAG(IS_WIN)
 
-constexpr Instruction kRequiredBody[] = {kBrkF000, kBrk1};
-constexpr Instruction kOptionalFooter[] = {};
+constexpr auto kRequiredBody = std::to_array<Instruction>({kBrkF000, kBrk1});
+constexpr auto kOptionalFooter = std::array<Instruction, 0u>{};
 
 #elif BUILDFLAG(IS_MAC)
 
-constexpr Instruction kRequiredBody[] = {kBrk0, kHlt0};
+constexpr auto kRequiredBody = std::to_array<Instruction>({kBrk0, kHlt0});
 // Some clangs emit a BRK #1 for __builtin_unreachable(), but some do not, so
 // it is allowed but not required to occur.
-constexpr Instruction kOptionalFooter[] = {kBrk1};
+constexpr auto kOptionalFooter = std::to_array<Instruction>({kBrk1});
 
 #else
 
-constexpr Instruction kRequiredBody[] = {kBrk0, kHlt0};
-constexpr Instruction kOptionalFooter[] = {};
+constexpr auto kRequiredBody = std::to_array<Instruction>({kBrk0, kHlt0});
+constexpr auto kOptionalFooter = std::array<Instruction, 0u>{};
 
 #endif
 
@@ -150,64 +149,40 @@ void GetTestFunctionInstructions(std::vector<Instruction>* body) {
   const Instruction* const start = static_cast<Instruction*>(std::min(a, b));
   const Instruction* const end = static_cast<Instruction*>(std::max(a, b));
 
-  for (const Instruction& instruction : make_span(start, end))
-    body->push_back(instruction);
+  auto instructions = UNSAFE_TODO(span(start, end));
+  body->insert(body->end(), instructions.begin(), instructions.end());
 }
 
 #if defined(OFFICIAL_BUILD)
 
-std::optional<std::vector<Instruction>> ExpectImmediateCrashInvocation(
-    std::vector<Instruction> instructions) {
-  auto iter = instructions.begin();
-  for (const auto inst : kRequiredBody) {
-    if (iter == instructions.end())
-      return std::nullopt;
-    EXPECT_EQ(inst, *iter);
-    iter++;
-  }
-  return std::make_optional(std::vector<Instruction>(iter, instructions.end()));
-}
-
-std::vector<Instruction> MaybeSkipOptionalFooter(
-    std::vector<Instruction> instructions) {
-  auto iter = instructions.begin();
+// Consumes as many elements from the front of `instructions` as match
+// in `kOptionalFooter`, returning the result.
+span<const Instruction> MaybeSkipOptionalFooter(
+    span<const Instruction> instructions) {
   for (const auto inst : kOptionalFooter) {
-    if (iter == instructions.end() || *iter != inst)
+    if (instructions.empty() || inst != instructions[0u]) {
       break;
-    iter++;
+    }
+    instructions.take_first<1u>();
   }
-  return std::vector<Instruction>(iter, instructions.end());
+  return instructions;
 }
 
-#if BUILDFLAG(USE_CLANG_COVERAGE) || BUILDFLAG(CLANG_PROFILING)
-bool MatchPrefix(const std::vector<Instruction>& haystack,
-                 const base::span<const Instruction>& needle) {
-  for (size_t i = 0; i < needle.size(); i++) {
-    if (i >= haystack.size() || needle[i] != haystack[i])
-      return false;
-  }
-  return true;
-}
-
-std::vector<Instruction> DropUntilMatch(
-    std::vector<Instruction> haystack,
-    const base::span<const Instruction>& needle) {
-  while (!haystack.empty() && !MatchPrefix(haystack, needle))
-    haystack.erase(haystack.begin());
-  return haystack;
-}
-
-#endif  // USE_CLANG_COVERAGE || BUILDFLAG(CLANG_PROFILING)
-
-std::vector<Instruction> MaybeSkipCoverageHook(
-    std::vector<Instruction> instructions) {
+span<const Instruction> MaybeSkipCoverageHook(
+    span<const Instruction> instructions) {
 #if BUILDFLAG(USE_CLANG_COVERAGE) || BUILDFLAG(CLANG_PROFILING)
   // Warning: it is not illegal for the entirety of the expected crash sequence
   // to appear as a subsequence of the coverage hook code. If that happens, this
   // code will falsely exit early, having not found the real expected crash
   // sequence, so this may not adequately ensure that the immediate crash
   // sequence is present. We do check when not under coverage, at least.
-  return DropUntilMatch(instructions, base::make_span(kRequiredBody));
+  while (instructions.size() >= kRequiredBody.size()) {
+    if (instructions.first<kRequiredBody.size()>() == kRequiredBody) {
+      return instructions;
+    }
+    instructions.take_first<1u>();
+  }
+  return {};
 #else
   return instructions;
 #endif  // USE_CLANG_COVERAGE || BUILDFLAG(CLANG_PROFILING)
@@ -234,23 +209,26 @@ std::vector<Instruction> MaybeSkipCoverageHook(
 TEST(ImmediateCrashTest, ExpectedOpcodeSequence) {
   std::vector<Instruction> body;
   ASSERT_NO_FATAL_FAILURE(GetTestFunctionInstructions(&body));
-  SCOPED_TRACE(HexEncode(body.data(), body.size() * sizeof(Instruction)));
+  SCOPED_TRACE(HexEncode(base::as_byte_span(body)));
 
   // In non-official builds, we std::abort instead, so the result will be
   // false - but let's still go through the motions above so we spot any
   // problems in this _test code_ in as many build permutations as possible.
 #if defined(OFFICIAL_BUILD)
-  auto it = ranges::find(body, kRet);
+  auto it = std::ranges::find(body, kRet);
   ASSERT_NE(body.end(), it) << "Failed to find return opcode";
   it++;
 
   body = std::vector<Instruction>(it, body.end());
-  std::optional<std::vector<Instruction>> result = MaybeSkipCoverageHook(body);
-  result = ExpectImmediateCrashInvocation(result.value());
-  result = MaybeSkipOptionalFooter(result.value());
-  result = MaybeSkipCoverageHook(result.value());
-  result = ExpectImmediateCrashInvocation(result.value());
-  ASSERT_TRUE(result);
+  base::span<const Instruction> result = MaybeSkipCoverageHook(body);
+  // `result` must have a `kRequiredBody`.
+  ASSERT_TRUE(std::ranges::starts_with(result, kRequiredBody));
+  result.take_first<kRequiredBody.size()>();
+
+  result = MaybeSkipOptionalFooter(result);
+  result = MaybeSkipCoverageHook(result);
+  // `result` must have a second `kRequiredBody`.
+  ASSERT_TRUE(std::ranges::starts_with(result, kRequiredBody));
 #endif  // defined(OFFICIAL_BUILD)
 }
 

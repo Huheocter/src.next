@@ -2,10 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <tuple>
+
+#include "base/strings/stringprintf.h"
+#include "base/test/scoped_feature_list.h"
+#include "base/test/with_feature_override.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/service_worker_context.h"
 #include "content/public/test/browser_test.h"
@@ -30,7 +35,7 @@ namespace {
 // TODO(crbug.com/40909770): Create test cases where we test "failures" like
 // events not acking.
 
-using ContextType = ExtensionBrowserTest::ContextType;
+using ContextType = extensions::browser_test_util::ContextType;
 using EventMetricsBrowserTest = ExtensionBrowserTest;
 using service_worker_test_utils::TestServiceWorkerTaskQueueObserver;
 
@@ -38,14 +43,7 @@ using service_worker_test_utils::TestServiceWorkerContextObserver;
 
 // Tests that the only the dispatch time histogram provided to the test is
 // emitted with a sane value, and that other provided metrics are not emitted.
-// TODO(crbug.com/40282331): Disabled on ASAN due to leak caused by renderer gin
-// objects which are intended to be leaked.
-#if defined(ADDRESS_SANITIZER)
-#define MAYBE_DispatchMetricTest DISABLED_DispatchMetricTest
-#else
-#define MAYBE_DispatchMetricTest DispatchMetricTest
-#endif
-IN_PROC_BROWSER_TEST_F(EventMetricsBrowserTest, MAYBE_DispatchMetricTest) {
+IN_PROC_BROWSER_TEST_F(EventMetricsBrowserTest, DispatchMetricTest) {
   ASSERT_TRUE(embedded_test_server()->Start());
   struct {
     const std::string event_metric_emitted;
@@ -263,7 +261,7 @@ IN_PROC_BROWSER_TEST_F(EventMetricsBrowserTest,
 
   ExtensionBackgroundPageWaiter(profile(), *extension).WaitForBackgroundOpen();
   ProcessManager* process_manager = ProcessManager::Get(profile());
-  ASSERT_FALSE(process_manager->IsEventPageSuspended(extension->id()));
+  ASSERT_TRUE(process_manager->GetBackgroundHostForExtension(extension->id()));
 
   base::HistogramTester histogram_tester;
   ExtensionTestMessageListener test_event_listener_fired("listener fired");
@@ -311,7 +309,7 @@ IN_PROC_BROWSER_TEST_F(EventMetricsBrowserTest,
   ExtensionBackgroundPageWaiter(profile(), *extension)
       .WaitForBackgroundClosed();
   ProcessManager* process_manager = ProcessManager::Get(profile());
-  ASSERT_TRUE(process_manager->IsEventPageSuspended(extension->id()));
+  ASSERT_FALSE(process_manager->GetBackgroundHostForExtension(extension->id()));
 
   base::HistogramTester histogram_tester;
   ExtensionTestMessageListener test_event_listener_fired("listener fired");
@@ -531,9 +529,8 @@ IN_PROC_BROWSER_TEST_F(EventMetricsBrowserTest,
       /*expected_count=*/0);
 }
 
-// Tests that a running service worker will be unnecessarily started when it
-// receives an event while it is already started if there are no pending events
-// (the worker worker isn't in the process of starting).
+// Tests that a running service worker will not be unnecessarily started when it
+// receives an event while it is already started.
 IN_PROC_BROWSER_TEST_F(EventMetricsBrowserTest,
                        ServiceWorkerRedundantStartCountTest) {
   ASSERT_TRUE(embedded_test_server()->Start());
@@ -564,43 +561,58 @@ IN_PROC_BROWSER_TEST_F(EventMetricsBrowserTest,
       embedded_test_server()->GetURL("example.com", "/simple.html")));
   ASSERT_TRUE(test_event_listener_fired.WaitUntilSatisfied());
 
-  {
-    SCOPED_TRACE("Waiting for the worker to start.");
-    ready_observer.WaitForWorkerStarted(extension->id());
-  }
-  // TODO(crbug.com/40276609): Once we no longer unnecessarily start the
-  // worker
-  // this will become 0.
-  // Since we don't check if a worker is ready before dispatching the the
-  // event we will attempt to start the worker.
+  // We do check if a worker is ready before attempting to
+  // start it again.
   histogram_tester.ExpectTotalCount(
       "Extensions.ServiceWorkerBackground."
       "RequestedWorkerStartForStartedWorker3",
-      /*expected_count=*/1);
+      /*expected_count=*/0);
   // Verify that the value is `true` since the worker
   // will be unnecessarily started.
   histogram_tester.ExpectBucketCount(
       "Extensions.ServiceWorkerBackground."
       "RequestedWorkerStartForStartedWorker3",
-      /*sample=*/true, /*expected_count=*/1);
+      /*sample=*/true, /*expected_count=*/0);
 }
 
-class EventMetricsDispatchToSenderBrowserTest
+// Runs webRequest dispatch metrics tests for each background context type,
+// with kWebRequestPerContextEventDispatch disabled (legacy) and enabled
+// (per-context).
+class EventMetricsWebRequestDispatchBrowserTest
     : public ExtensionBrowserTest,
-      public testing::WithParamInterface<ContextType> {
+      public testing::WithParamInterface<std::tuple<ContextType, bool>> {
  public:
-  EventMetricsDispatchToSenderBrowserTest() = default;
+  EventMetricsWebRequestDispatchBrowserTest() {
+    feature_list_.InitWithFeatureState(
+        extensions_features::kWebRequestPerContextEventDispatch,
+        IsPerContextDispatch());
+  }
 
-  EventMetricsDispatchToSenderBrowserTest(
-      const EventMetricsDispatchToSenderBrowserTest&) = delete;
-  EventMetricsDispatchToSenderBrowserTest& operator=(
-      const EventMetricsDispatchToSenderBrowserTest&) = delete;
+  EventMetricsWebRequestDispatchBrowserTest(
+      const EventMetricsWebRequestDispatchBrowserTest&) = delete;
+  EventMetricsWebRequestDispatchBrowserTest& operator=(
+      const EventMetricsWebRequestDispatchBrowserTest&) = delete;
+
+  // Names a test instance after its dispatch mode. The instantiation prefix
+  // names the context type.
+  static std::string DescribeParams(
+      const testing::TestParamInfo<ParamType>& info) {
+    const auto& [context_type, per_context_dispatch] = info.param;
+    return per_context_dispatch ? "PerContextDispatch" : "LegacyDispatch";
+  }
+
+ protected:
+  ContextType GetContextType() const { return std::get<0>(GetParam()); }
+  bool IsPerContextDispatch() const { return std::get<1>(GetParam()); }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
 };
 
-// Tests that the we do not emit event dispatch time metrics for webRequest
-// events with active listeners.
-IN_PROC_BROWSER_TEST_P(EventMetricsDispatchToSenderBrowserTest,
-                       DispatchToSenderMetricTest) {
+// Tests that webRequest events to active listeners record dispatch-to-ack
+// metrics only under per-context dispatch.
+IN_PROC_BROWSER_TEST_P(EventMetricsWebRequestDispatchBrowserTest,
+                       DispatchToAckMetricsForActiveListeners) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   // Load either a persistent background page or a service worker extension
@@ -628,7 +640,7 @@ IN_PROC_BROWSER_TEST_P(EventMetricsDispatchToSenderBrowserTest,
         %s
       })";
   bool persistent_background_extension =
-      GetParam() == ContextType::kPersistentBackground;
+      GetContextType() == ContextType::kPersistentBackground;
   const char* background_script = persistent_background_extension
                                       ? kManifestPersistentBackgroundScript
                                       : kManifestServiceWorkerBackgroundScript;
@@ -682,20 +694,33 @@ IN_PROC_BROWSER_TEST_P(EventMetricsDispatchToSenderBrowserTest,
       embedded_test_server()->GetURL("example.com", "/simple.html")));
   EXPECT_TRUE(test_event_listener_fired.WaitUntilSatisfied());
 
-  // We do not emit any dispatch histograms for webRequest events to active
-  // listeners.
+  // Legacy DispatchEventToSender() excludes these events from dispatch
+  // histograms, while per-context DispatchEventToProcess() records them.
+  const int service_worker_count =
+      !persistent_background_extension && IsPerContextDispatch() ? 1 : 0;
+  const int persistent_page_count =
+      persistent_background_extension && IsPerContextDispatch() ? 1 : 0;
   histogram_tester.ExpectTotalCount(
       "Extensions.Events.DispatchToAckTime.ExtensionServiceWorker2",
-      /*expected_count=*/0);
+      service_worker_count);
   histogram_tester.ExpectTotalCount(
       "Extensions.Events.DispatchToAckLongTime.ExtensionServiceWorker2",
-      /*expected_count=*/0);
+      service_worker_count);
   histogram_tester.ExpectTotalCount(
       "Extensions.Events.DidDispatchToAckSucceed.ExtensionServiceWorker3",
-      /*expected_count=*/0);
+      service_worker_count);
+  histogram_tester.ExpectTotalCount(
+      "Extensions.Events.DispatchToAckTime.ExtensionPersistentBackgroundPage",
+      persistent_page_count);
+  // The event page variant is never emitted for these extensions.
   histogram_tester.ExpectTotalCount(
       "Extensions.Events.DidDispatchToAckSucceed.ExtensionPage",
       /*expected_count=*/0);
+  // Not gated on the dispatch flow: the persistent background page acks the
+  // event in both flows.
+  histogram_tester.ExpectTotalCount(
+      "Extensions.Events.DidDispatchToAckSucceed.ExtensionPersistentPage",
+      persistent_background_extension ? 1 : 0);
 
   // We do always log starting/finishing an external request.
   if (!persistent_background_extension) {  // service worker
@@ -712,12 +737,18 @@ IN_PROC_BROWSER_TEST_P(EventMetricsDispatchToSenderBrowserTest,
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(PersistentBackground,
-                         EventMetricsDispatchToSenderBrowserTest,
-                         ::testing::Values(ContextType::kPersistentBackground));
-INSTANTIATE_TEST_SUITE_P(ServiceWorker,
-                         EventMetricsDispatchToSenderBrowserTest,
-                         ::testing::Values(ContextType::kServiceWorker));
+INSTANTIATE_TEST_SUITE_P(
+    PersistentBackground,
+    EventMetricsWebRequestDispatchBrowserTest,
+    ::testing::Combine(::testing::Values(ContextType::kPersistentBackground),
+                       /*per_context_dispatch=*/::testing::Bool()),
+    EventMetricsWebRequestDispatchBrowserTest::DescribeParams);
+INSTANTIATE_TEST_SUITE_P(
+    ServiceWorker,
+    EventMetricsWebRequestDispatchBrowserTest,
+    ::testing::Combine(::testing::Values(ContextType::kServiceWorker),
+                       /*per_context_dispatch=*/::testing::Bool()),
+    EventMetricsWebRequestDispatchBrowserTest::DescribeParams);
 
 class LazyBackgroundEventMetricsApiTest : public ExtensionApiTest {
  public:
@@ -732,10 +763,6 @@ class LazyBackgroundEventMetricsApiTest : public ExtensionApiTest {
     ExtensionApiTest::SetUpOnMainThread();
     host_resolver()->AddRule("*", "127.0.0.1");
     ASSERT_TRUE(StartEmbeddedTestServer());
-  }
-
-  content::WebContents* web_contents() {
-    return browser()->tab_strip_model()->GetActiveWebContents();
   }
 };
 
@@ -798,7 +825,7 @@ IN_PROC_BROWSER_TEST_F(
   // Navigate to page.html to get the content_script to load.
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
       browser(), extension->GetResourceURL("page.html")));
-  ASSERT_TRUE(content::WaitForLoadStop(web_contents()));
+  ASSERT_TRUE(content::WaitForLoadStop(GetActiveWebContents()));
   ASSERT_TRUE(page_script_loaded.WaitUntilSatisfied());
 
   // Set storage value which should fire chrome.storage.onChanged listener in

@@ -2,24 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "extensions/common/url_pattern.h"
 
 #include <stddef.h>
 
+#include <array>
 #include <ostream>
 #include <string_view>
 
-#include "base/containers/contains.h"
+#include "base/i18n/case_conversion.h"
+#include "base/strings/escape.h"
 #include "base/strings/pattern.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/common/constants.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
@@ -33,7 +31,7 @@ namespace {
 
 // TODO(aa): What about more obscure schemes like javascript: ?
 // Note: keep this array in sync with kValidSchemeMasks.
-const char* const kValidSchemes[] = {
+constexpr std::array kValidSchemes = {
     url::kHttpScheme,          url::kHttpsScheme,
     url::kFileScheme,          url::kFtpScheme,
     content::kChromeUIScheme,  extensions::kExtensionScheme,
@@ -42,7 +40,7 @@ const char* const kValidSchemes[] = {
     url::kUuidInPackageScheme,
 };
 
-const int kValidSchemeMasks[] = {
+constexpr std::array kValidSchemeMasks = {
     URLPattern::SCHEME_HTTP,
     URLPattern::SCHEME_HTTPS,
     URLPattern::SCHEME_FILE,
@@ -70,16 +68,16 @@ const char kParseErrorInvalidPort[] = "Invalid port.";
 const char kParseErrorInvalidHost[] = "Invalid host.";
 
 // Message explaining each URLPattern::ParseResult.
-const char* const kParseResultMessages[] = {
-  kParseSuccess,
-  kParseErrorMissingSchemeSeparator,
-  kParseErrorInvalidScheme,
-  kParseErrorWrongSchemeType,
-  kParseErrorEmptyHost,
-  kParseErrorInvalidHostWildcard,
-  kParseErrorEmptyPath,
-  kParseErrorInvalidPort,
-  kParseErrorInvalidHost,
+constexpr std::array kParseResultMessages = {
+    kParseSuccess,
+    kParseErrorMissingSchemeSeparator,
+    kParseErrorInvalidScheme,
+    kParseErrorWrongSchemeType,
+    kParseErrorEmptyHost,
+    kParseErrorInvalidHostWildcard,
+    kParseErrorEmptyPath,
+    kParseErrorInvalidPort,
+    kParseErrorInvalidHost,
 };
 
 static_assert(static_cast<int>(URLPattern::ParseResult::kNumParseResults) ==
@@ -94,8 +92,7 @@ bool IsStandardScheme(std::string_view scheme) {
     return true;
   }
 
-  return url::IsStandard(scheme.data(),
-                         url::Component(0, static_cast<int>(scheme.length())));
+  return url::IsStandard(scheme);
 }
 
 bool IsValidPortForScheme(std::string_view scheme, std::string_view port) {
@@ -129,12 +126,9 @@ std::string_view StripTrailingWildcard(std::string_view path) {
   return path;
 }
 
-// Removes trailing dot from |host_piece| if any.
+// Removes trailing dot(s) from |host_piece| if any.
 std::string_view CanonicalizeHostForMatching(std::string_view host_piece) {
-  if (base::EndsWith(host_piece, ".")) {
-    host_piece.remove_suffix(1);
-  }
-  return host_piece;
+  return base::TrimString(host_piece, ".", base::TRIM_TRAILING);
 }
 
 }  // namespace
@@ -192,18 +186,6 @@ URLPattern::~URLPattern() = default;
 URLPattern& URLPattern::operator=(const URLPattern& other) = default;
 
 URLPattern& URLPattern::operator=(URLPattern&& other) = default;
-
-bool URLPattern::operator<(const URLPattern& other) const {
-  return GetAsString() < other.GetAsString();
-}
-
-bool URLPattern::operator>(const URLPattern& other) const {
-  return GetAsString() > other.GetAsString();
-}
-
-bool URLPattern::operator==(const URLPattern& other) const {
-  return GetAsString() == other.GetAsString();
-}
 
 std::ostream& operator<<(std::ostream& out, const URLPattern& url_pattern) {
   return out << '"' << url_pattern.GetAsString() << '"';
@@ -343,7 +325,7 @@ URLPattern::ParseResult URLPattern::Parse(std::string_view pattern) {
   // No other '*' can occur in the host, though. This isn't necessary, but is
   // done as a convenience to developers who might otherwise be confused and
   // think '*' works as a glob in the host.
-  if (base::Contains(host_, '*')) {
+  if (host_.contains('*')) {
     return ParseResult::kInvalidHostWildcard;
   }
 
@@ -359,7 +341,7 @@ URLPattern::ParseResult URLPattern::Parse(std::string_view pattern) {
   }
 
   // Null characters are not allowed in hosts.
-  if (base::Contains(host_, '\0')) {
+  if (host_.contains('\0')) {
     return ParseResult::kInvalidHost;
   }
 
@@ -414,8 +396,8 @@ bool URLPattern::IsValidScheme(std::string_view scheme) const {
   }
 
   for (size_t i = 0; i < std::size(kValidSchemes); ++i) {
-    if (scheme == kValidSchemes[i] && (valid_schemes_ & kValidSchemeMasks[i])) {
-      return true;
+    if (scheme == kValidSchemes[i]) {
+      return valid_schemes_ & kValidSchemeMasks[i];
     }
   }
 
@@ -425,9 +407,11 @@ bool URLPattern::IsValidScheme(std::string_view scheme) const {
 void URLPattern::SetPath(std::string_view path) {
   spec_.clear();
   path_ = path;
-  path_escaped_ = path_;
-  base::ReplaceSubstringsAfterOffset(&path_escaped_, 0, "\\", "\\\\");
-  base::ReplaceSubstringsAfterOffset(&path_escaped_, 0, "?", "\\?");
+  raw_path_for_matching_ = path_;
+  base::ReplaceSubstringsAfterOffset(&raw_path_for_matching_, 0, "\\", "\\\\");
+  base::ReplaceSubstringsAfterOffset(&raw_path_for_matching_, 0, "?", "\\?");
+  utf8_path_for_matching_ = base::UnescapeURLComponent(
+      raw_path_for_matching_, base::UnescapeRule::NORMAL);
 }
 
 bool URLPattern::SetPort(std::string_view port) {
@@ -440,6 +424,10 @@ bool URLPattern::SetPort(std::string_view port) {
 }
 
 bool URLPattern::MatchesURL(const GURL& test) const {
+  return MatchesURL(test, /*case_sensitive=*/true);
+}
+
+bool URLPattern::MatchesURL(const GURL& test, bool case_sensitive) const {
   // Invalid URLs can never match.
   if (!test.is_valid()) {
     return false;
@@ -457,7 +445,7 @@ bool URLPattern::MatchesURL(const GURL& test) const {
 
   // Ensure the scheme matches first, since <all_urls> may not match this URL if
   // the scheme is excluded.
-  if (!MatchesScheme(test_url->scheme_piece())) {
+  if (!MatchesScheme(test_url->scheme())) {
     return false;
   }
 
@@ -473,11 +461,11 @@ bool URLPattern::MatchesURL(const GURL& test) const {
 
   std::string path_for_request = test.PathForRequest();
   if (has_inner_url) {
-    path_for_request = base::StrCat({test_url->path_piece(), path_for_request});
+    path_for_request = base::StrCat({test_url->path(), path_for_request});
   }
 
   return MatchesSecurityOriginHelper(*test_url) &&
-         MatchesPath(path_for_request);
+         MatchesPath(path_for_request, case_sensitive);
 }
 
 bool URLPattern::MatchesSecurityOrigin(const GURL& test) const {
@@ -491,7 +479,7 @@ bool URLPattern::MatchesSecurityOrigin(const GURL& test) const {
     test_url = test.inner_url();
   }
 
-  if (!MatchesScheme(test_url->scheme())) {
+  if (!MatchesScheme(test_url->GetScheme())) {
     return false;
   }
 
@@ -520,7 +508,7 @@ bool URLPattern::MatchesHost(std::string_view host) const {
 }
 
 bool URLPattern::MatchesHost(const GURL& test) const {
-  std::string_view test_host(CanonicalizeHostForMatching(test.host_piece()));
+  std::string_view test_host(CanonicalizeHostForMatching(test.host()));
   const std::string_view pattern_host(CanonicalizeHostForMatching(host_));
 
   // If the hosts are exactly equal, we have a match.
@@ -596,16 +584,104 @@ bool URLPattern::MatchesSingleOrigin() const {
 }
 
 bool URLPattern::MatchesPath(std::string_view test) const {
-  // Make the behaviour of OverlapsWith consistent with MatchesURL, which is
-  // need to match hosted apps on e.g. 'google.com' also run on 'google.com/'.
-  // The below if is a no-copy way of doing (test + "/*" == path_escaped_).
-  if (path_escaped_.length() == test.length() + 2 &&
-      base::StartsWith(path_escaped_.c_str(), test) &&
-      base::EndsWith(path_escaped_, "/*")) {
+  return MatchesPath(test, /*case_sensitive=*/true);
+}
+
+bool URLPattern::MatchesPath(std::string_view test, bool case_sensitive) const {
+  // Unescape %-encoding. This is important for processing UTF8 matches, where
+  // "café.html" would reach this code as "caf%C3%A9.html", and thus doesn't
+  // match the path in the manifest via a simple MatchPattern() test.
+  // NOTE: We have to do this even if both strings are pure-ASCII. Percent-
+  // encodings are case-insensitive, so `caf%C3%A9` and `caf%c3%a9` match
+  // after escaping, even though they don't match (case-sensitively) before
+  // escaping.
+  std::string unescaped_test =
+      base::UnescapeURLComponent(test, base::UnescapeRule::NORMAL);
+
+  // Make the behaviour of OverlapsWith consistent with MatchesURL, which
+  // is needed to ensure hosted apps on e.g. 'google.com' also run on
+  // 'google.com/'. The below if is a no-copy way of doing (unescaped_test +
+  // "/*" == utf8_path_for_matching_).
+  if (utf8_path_for_matching_.length() == unescaped_test.length() + 2 &&
+      base::StartsWith(utf8_path_for_matching_, unescaped_test) &&
+      base::EndsWith(utf8_path_for_matching_, "/*")) {
     return true;
   }
 
-  return base::MatchPattern(test, path_escaped_);
+  if (case_sensitive) {
+    // Match the unescaped strings first to handle UTF-8 sequences (e.g.
+    // "café.html" vs "caf%C3%A9.html"). If that fails, fall back to matching
+    // the raw strings; base::MatchPattern() requires valid UTF-8 and rejects
+    // invalid UTF-8 byte sequences, so percent-encoded non-UTF-8 bytes (like
+    // "%E1") can only match via the raw ASCII percent-encoded strings.
+    return base::MatchPattern(unescaped_test, utf8_path_for_matching_) ||
+           base::MatchPattern(test, raw_path_for_matching_);
+  }
+
+  // Check if the pattern matches in a case-insensitive way.
+
+  // Fast path: If both unescaped strings are pure ASCII, Unicode case folding
+  // is identical to ASCII lowercasing, allowing us to avoid UTF-16 conversions
+  // and ICU case-folding overhead.
+  if (base::IsStringASCII(unescaped_test) &&
+      base::IsStringASCII(utf8_path_for_matching_)) {
+    std::string lower_unescaped_test = base::ToLowerASCII(unescaped_test);
+    std::string lower_utf8_path_for_matching =
+        base::ToLowerASCII(utf8_path_for_matching_);
+
+    if (lower_utf8_path_for_matching.length() ==
+            lower_unescaped_test.length() + 2 &&
+        base::StartsWith(lower_utf8_path_for_matching, lower_unescaped_test) &&
+        base::EndsWith(lower_utf8_path_for_matching, "/*")) {
+      return true;
+    }
+
+    return base::MatchPattern(lower_unescaped_test,
+                              lower_utf8_path_for_matching) ||
+           base::MatchPattern(base::ToLowerASCII(test),
+                              base::ToLowerASCII(raw_path_for_matching_));
+  }
+
+  // Non-ASCII path: Try unescaped UTF-8 matching using Unicode case folding,
+  // provided both strings are valid UTF-8. If either string contains invalid
+  // UTF-8 byte sequences (such as unescaped non-UTF-8 percent-encoded bytes),
+  // base::UTF8ToUTF16() would replace those invalid bytes with U+FFFD, causing
+  // different invalid byte sequences (e.g. %E1 and %E2) to falsely match.
+  std::u16string test_u16;
+  std::u16string pattern_u16;
+  if (base::UTF8ToUTF16(unescaped_test.data(), unescaped_test.size(),
+                        &test_u16) &&
+      base::UTF8ToUTF16(utf8_path_for_matching_.data(),
+                        utf8_path_for_matching_.size(), &pattern_u16)) {
+    test_u16 = base::i18n::FoldCase(test_u16);
+    pattern_u16 = base::i18n::FoldCase(pattern_u16);
+
+    // Check again for the /* ending with the unescaped, canonical case
+    // variants.
+    if (pattern_u16.length() == test_u16.length() + 2 &&
+        base::StartsWith(pattern_u16, test_u16) &&
+        base::EndsWith(pattern_u16, u"/*")) {
+      return true;
+    }
+
+    if (base::MatchPattern(test_u16, pattern_u16)) {
+      return true;
+    }
+  }
+
+  // Fall back to matching the raw strings case-insensitively. This handles
+  // percent-encoded non-UTF-8 bytes (like "%E1"), matching them via their ASCII
+  // representations.
+  std::string lower_test = base::ToLowerASCII(test);
+  std::string lower_pattern = base::ToLowerASCII(raw_path_for_matching_);
+
+  if (lower_pattern.length() == lower_test.length() + 2 &&
+      base::StartsWith(lower_pattern, lower_test) &&
+      base::EndsWith(lower_pattern, "/*")) {
+    return true;
+  }
+
+  return base::MatchPattern(lower_test, lower_pattern);
 }
 
 const std::string& URLPattern::GetAsString() const {
@@ -717,7 +793,17 @@ std::optional<URLPattern> URLPattern::CreateIntersection(
       }
       URLPattern result(intersection_schemes);
       ParseResult parse_result = result.Parse(copy_source->GetAsString());
-      CHECK_EQ(ParseResult::kSuccess, parse_result);
+      // It is possible for parsing to fail if the intersected scheme mask
+      // excludes the scheme present in `copy_source`. For example, this happens
+      // when taking the intersection of policy-allowed hosts and the hosts on
+      // the extension's permissions data, and the policy pattern corresponds
+      // to a scheme that isn't present in the intersected schemes (like an
+      // extension without extension scheme access intersecting with a policy
+      // allowing an extension scheme URL). In this case, the intersection is
+      // empty.
+      if (parse_result != ParseResult::kSuccess) {
+        return std::nullopt;
+      }
       return result;
     }
   }

@@ -5,6 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LOADER_IDLENESS_DETECTOR_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LOADER_IDLENESS_DETECTOR_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/task/sequence_manager/task_time_observer.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
@@ -17,11 +18,13 @@ namespace blink {
 class LocalFrame;
 class ResourceFetcher;
 
-// IdlenessDetector observes the resource request count every time a load is
-// finshed after DOMContentLoadedEventEnd is fired. It emits a network almost
-// idle signal when there are no more than 2 network connections active in 0.5
-// seconds, and a network idle signal when there are 0 network connections
-// active in 0.5 seconds.
+// Once started, IdlenessDetector observes the resource request count every time
+// a resource load is finished. It emits a network almost idle signal when there
+// are no more than 2 network connections active in 0.5 seconds, and a network
+// idle signal when there are 0 network connections active in 0.5 seconds and
+// then stops observing. The detector is always run after a
+// DOMContentLoadedEventEnd is fired but can also be re-started explicitly after
+// it finishes observation.
 class CORE_EXPORT IdlenessDetector
     : public GarbageCollected<IdlenessDetector>,
       public base::sequence_manager::TaskTimeObserver {
@@ -36,6 +39,8 @@ class CORE_EXPORT IdlenessDetector
   void WillCommitLoad();
   void DomContentLoadedEventFired();
   void DidDropNavigation();
+  void StartIfNeeded();
+
   // TODO(lpy) Don't need to pass in fetcher once the command line of disabling
   // PlzNavigate is removed.
   void OnWillSendRequest(ResourceFetcher*);
@@ -59,7 +64,8 @@ class CORE_EXPORT IdlenessDetector
   // TaskTimeObserver implementation.
   void WillProcessTask(base::TimeTicks start_time) override;
   void DidProcessTask(base::TimeTicks start_time,
-                      base::TimeTicks end_time) override;
+                      base::TimeTicks end_time,
+                      base::TimeTicks desired_execution_time) override;
 
   void Start();
   void Stop();
@@ -78,7 +84,8 @@ class CORE_EXPORT IdlenessDetector
   bool in_network_0_quiet_period_ = true;
   bool in_network_2_quiet_period_ = true;
 
-  const base::TickClock* clock_;
+  raw_ptr<const base::TickClock, UnprotectedInRelease | DanglingUntriaged>
+      clock_;
 
   base::TimeDelta network_quiet_window_ = kNetworkQuietWindow;
   // Store the accumulated time of network quiet.

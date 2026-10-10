@@ -5,6 +5,7 @@
 import {html} from '//resources/lit/v3_0/lit.rollup.js';
 
 import type {ExtensionsRuntimeHostPermissionsElement} from './runtime_host_permissions.js';
+import type {ServiceInterface} from './service.js';
 
 export function getHtml(this: ExtensionsRuntimeHostPermissionsElement) {
   // clang-format off
@@ -20,7 +21,7 @@ ${!this.enableEnhancedSiteControls ? html`
             aria-label="$i18n{permissionsLearnMoreLabel}"
             href="$i18n{hostPermissionsLearnMoreLink}" target="_blank"
             @click="${this.onLearnMoreClick_}">
-          <cr-icon icon="cr:help-outline"></cr-icon>
+          <cr-icon icon="cr:help"></cr-icon>
         </a>
       </div>
       <div>
@@ -28,36 +29,40 @@ ${!this.enableEnhancedSiteControls ? html`
             @change="${this.onHostAccessChange_}"
             aria-labelledby="section-heading-text">
           <option value="${chrome.developerPrivate.HostAccess.ON_CLICK}"
-              ?selected="${this.isHostAccessSelected_(
-                  chrome.developerPrivate.HostAccess.ON_CLICK)}">
+              ?selected="${
+                  this.isHostAccessSelected_(
+                      chrome.developerPrivate.HostAccess.ON_CLICK)}">
             $i18n{hostAccessOnClick}
           </option>
           <option
               value="${chrome.developerPrivate.HostAccess.ON_SPECIFIC_SITES}"
-              ?selected="${this.isHostAccessSelected_(
-                  chrome.developerPrivate.HostAccess.ON_SPECIFIC_SITES)}">
+              ?selected="${
+                  this.isHostAccessSelected_(
+                      chrome.developerPrivate.HostAccess.ON_SPECIFIC_SITES)}">
             $i18n{hostAccessOnSpecificSites}
           </option>
           <option value="${chrome.developerPrivate.HostAccess.ON_ALL_SITES}"
-              ?selected="${this.isHostAccessSelected_(
-                  chrome.developerPrivate.HostAccess.ON_ALL_SITES)}">
+              ?selected="${
+                  this.isHostAccessSelected_(
+                      chrome.developerPrivate.HostAccess.ON_ALL_SITES)}">
             $i18n{hostAccessOnAllSites}
           </option>
         </select>
       </div>
     </div>
-  </div>` : html`
+  </div>
+` : html`
   <div id="new-permissions-mode">
     <div id="new-section-heading">
       <div id="new-section-heading-title">
         <span id="new-section-heading-text">
-            $i18n{newHostPermissionsHeading}
+          $i18n{newHostPermissionsHeading}
         </span>
         <a class="link-icon-button"
             aria-label="$i18n{permissionsLearnMoreLabel}"
             href="$i18n{hostPermissionsLearnMoreLink}" target="_blank"
             @click="${this.onLearnMoreClick_}">
-          <cr-icon icon="cr:help-outline"></cr-icon>
+          <cr-icon icon="cr:help"></cr-icon>
         </a>
       </div>
       <span id="new-section-heading-subtext">
@@ -68,19 +73,22 @@ ${!this.enableEnhancedSiteControls ? html`
             @change="${this.onHostAccessChange_}"
             aria-labelledby="new-section-heading-text">
           <option value="${chrome.developerPrivate.HostAccess.ON_CLICK}"
-              ?selected="${this.isHostAccessSelected_(
-                  chrome.developerPrivate.HostAccess.ON_CLICK)}">
+              ?selected="${
+                  this.isHostAccessSelected_(
+                      chrome.developerPrivate.HostAccess.ON_CLICK)}">
             $i18n{hostAccessAskOnEveryVisit}
           </option>
           <option
               value="${chrome.developerPrivate.HostAccess.ON_SPECIFIC_SITES}"
-              ?selected="${this.isHostAccessSelected_(
-                  chrome.developerPrivate.HostAccess.ON_SPECIFIC_SITES)}">
+              ?selected="${
+                  this.isHostAccessSelected_(
+                      chrome.developerPrivate.HostAccess.ON_SPECIFIC_SITES)}">
             $i18n{hostAccessAllowOnSpecificSites}
           </option>
           <option value="${chrome.developerPrivate.HostAccess.ON_ALL_SITES}"
-              ?selected="${this.isHostAccessSelected_(
-                  chrome.developerPrivate.HostAccess.ON_ALL_SITES)}">
+              ?selected="${
+                  this.isHostAccessSelected_(
+                      chrome.developerPrivate.HostAccess.ON_ALL_SITES)}">
             $i18n{hostAccessAllowOnAllSites}
           </option>
         </select>
@@ -90,7 +98,8 @@ ${!this.enableEnhancedSiteControls ? html`
         </cr-button>
       </div>
     </div>
-  </div>`}
+  </div>
+`}
 
 ${this.showSpecificSites_() ? html`
   <ul id="hosts">
@@ -114,13 +123,15 @@ ${this.showSpecificSites_() ? html`
             title="$i18n{hostPermissionsEdit}"
             ?hidden="${this.enableEnhancedSiteControls}">
         </cr-icon-button>
-      </li>`)}
+      </li>
+    `)}
     <li ?hidden="${this.enableEnhancedSiteControls}">
       <a id="add-host" is="action-link" @click="${this.onAddHostClick_}">
         $i18n{itemSiteAccessAddHost}
       </a>
     </li>
-  </ul>` : ''}
+  </ul>
+` : ''}
 
 <cr-action-menu id="hostActionMenu" role-description="$i18n{menu}">
   <button class="dropdown-item" id="action-menu-edit"
@@ -133,28 +144,30 @@ ${this.showSpecificSites_() ? html`
   </button>
 </cr-action-menu>
 ${this.showHostDialog_ ? html`
-  <extensions-runtime-hosts-dialog .delegate="${this.delegate}"
-      .itemId="${this.itemId}"
+  <extensions-runtime-hosts-dialog
+      .delegate="${this.delegate as ServiceInterface}" .itemId="${this.itemId}"
       .enableEnhancedSiteControls="${this.enableEnhancedSiteControls}"
       .currentSite="${this.hostDialogModel_}"
       .updateHostAccess="${this.dialogShouldUpdateHostAccess_()}"
       @close="${this.onHostDialogClose_}" @cancel="${this.onHostDialogCancel_}">
-  </extensions-runtime-hosts-dialog>` : ''}
+  </extensions-runtime-hosts-dialog>
+` : ''}
 ${this.showRemoveSiteDialog_ ? html`
   <cr-dialog id="removeSitesDialog"
       @cancel="${this.onRemoveSitesWarningCancel_}" show-on-attach>
     <div slot="title">$i18n{removeSitesDialogTitle}</div>
     <div slot="button-container">
       <cr-button class="cancel-button"
-          @click="${this.onRemoveSitesWarningCancel_}">
+          @click="${this.onRemoveSitesWarningCancelClick_}">
         $i18n{cancel}
       </cr-button>
       <cr-button class="action-button"
-          @click="${this.onRemoveSitesWarningConfirm_}">
+          @click="${this.onRemoveSitesWarningConfirmClick_}">
         $i18n{remove}
       </cr-button>
     </div>
-  </cr-dialog>` : ''}
+  </cr-dialog>
+` : ''}
 <!--_html_template_end_-->`;
   // clang-format on
 }

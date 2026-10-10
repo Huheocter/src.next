@@ -18,6 +18,7 @@
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/policy_container.h"
 #include "third_party/blink/renderer/core/html/html_anchor_element.h"
+#include "third_party/blink/renderer/core/loader/frame_load_request.h"
 #include "third_party/blink/renderer/core/page/chrome_client_impl.h"
 #include "third_party/blink/renderer/core/testing/mock_policy_container_host.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
@@ -25,6 +26,7 @@
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
+#include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"
 
 namespace blink {
 
@@ -101,7 +103,11 @@ TEST_F(FrameLoaderSimTest, LoadEventProgressBeforeUnloadCanceled) {
     // beforeunload event is dispatched from content's RenderFrameImpl, Blink
     // tests mock this out using a WebFrameTestProxy which doesn't check
     // beforeunload before navigating.
-    ASSERT_FALSE(frame_a->Loader().ShouldClose());
+    base::TimeTicks before_unload_dialog_opened_time;
+    base::TimeTicks before_unload_dialog_closed_time;
+    ASSERT_FALSE(frame_a->Loader().ShouldClose(
+        /*is_reload=*/false, /*force_to_proceed=*/false,
+        before_unload_dialog_opened_time, before_unload_dialog_closed_time));
 
     EXPECT_FALSE(main_frame->GetDocument()->BeforeUnloadStarted());
     EXPECT_FALSE(frame_a->GetDocument()->BeforeUnloadStarted());
@@ -112,7 +118,11 @@ TEST_F(FrameLoaderSimTest, LoadEventProgressBeforeUnloadCanceled) {
   // Now test the opposite, the user allowing the navigation away.
   {
     chrome_client.SetBeforeUnloadConfirmPanelResultForTesting(true);
-    ASSERT_TRUE(frame_a->Loader().ShouldClose());
+    base::TimeTicks before_unload_dialog_opened_time;
+    base::TimeTicks before_unload_dialog_closed_time;
+    ASSERT_TRUE(frame_a->Loader().ShouldClose(
+        /*is_reload=*/false, /*force_to_proceed=*/false,
+        before_unload_dialog_opened_time, before_unload_dialog_closed_time));
 
     // The navigation was in frame a so it shouldn't affect the parent.
     EXPECT_FALSE(main_frame->GetDocument()->BeforeUnloadStarted());
@@ -251,32 +261,174 @@ class FrameLoaderTest : public testing::Test {
 TEST_F(FrameLoaderTest, PolicyContainerIsStoredOnCommitNavigation) {
   WebViewImpl* web_view_impl = web_view_helper_.Initialize();
 
-  const KURL& url = KURL(NullURL(), "https://www.example.com/bar.html");
+  const KURL& url = KURL(NullUrl(), "https://www.example.com/bar.html");
   std::unique_ptr<WebNavigationParams> params =
       WebNavigationParams::CreateWithEmptyHTMLForTesting(url);
   MockPolicyContainerHost mock_policy_container_host;
+  InitiatorStateToken initiator_state_token;
+  params->initiator_state_token = initiator_state_token;
   params->policy_container = std::make_unique<WebPolicyContainer>(
       WebPolicyContainerPolicies{
+          network::ConnectionAllowlists(),
           network::mojom::CrossOriginEmbedderPolicyValue::kNone,
+          network::IntegrityPolicy(),
+          network::IntegrityPolicy(),
           network::mojom::ReferrerPolicy::kAlways,
-          WebVector<WebContentSecurityPolicy>(),
+          std::vector<WebContentSecurityPolicy>(),
       },
       mock_policy_container_host.BindNewEndpointAndPassDedicatedRemote());
   LocalFrame* local_frame =
       To<LocalFrame>(web_view_impl->GetPage()->MainFrame());
   local_frame->Loader().CommitNavigation(std::move(params), nullptr);
 
-  EXPECT_EQ(*mojom::blink::PolicyContainerPolicies::New(
-                network::CrossOriginEmbedderPolicy(
-                    network::mojom::CrossOriginEmbedderPolicyValue::kNone),
-                network::mojom::ReferrerPolicy::kAlways,
-                Vector<network::mojom::blink::ContentSecurityPolicyPtr>(),
-                /*anonymous=*/false, network::mojom::WebSandboxFlags::kNone,
-                network::mojom::blink::IPAddressSpace::kUnknown,
-                /*can_navigate_top_without_user_gesture=*/true,
-                /*allow_cross_origin_isolation_under_initial_empty_document=*/
-                false),
-            local_frame->DomWindow()->GetPolicyContainer()->GetPolicies());
+  EXPECT_EQ(
+      *mojom::blink::PolicyContainerPolicies::New(
+          network::ConnectionAllowlists(),
+          network::CrossOriginEmbedderPolicy(
+              network::mojom::CrossOriginEmbedderPolicyValue::kNone),
+          network::IntegrityPolicy(), network::IntegrityPolicy(),
+          network::mojom::ReferrerPolicy::kAlways,
+          Vector<network::mojom::blink::ContentSecurityPolicyPtr>(),
+          /*is_credentialless=*/false, network::mojom::WebSandboxFlags::kNone,
+          network::mojom::blink::IPAddressSpace::kUnknown,
+          /*can_navigate_top_without_user_gesture=*/true,
+          /*cross_origin_isolation_enabled_by_dip=*/false),
+      local_frame->DomWindow()->GetPolicyContainer()->GetPolicies());
+  EXPECT_EQ(initiator_state_token,
+            local_frame->DomWindow()->GetInitiatorStateToken());
+}
+
+TEST_F(FrameLoaderSimTest, DirectLaunchSchemeBlocked) {
+  const String kScheme("direct-launch-scheme");
+  SchemeRegistry::RegisterURLSchemeAsDirectLaunch(kScheme);
+
+  SimRequest main_request("https://example.com/test.html", "text/html");
+  LoadURL("https://example.com/test.html");
+  main_request.Complete(StrCat({"<a id='link' href='", kScheme,
+                                ":https://example.com/dest.html'>link</a>"}));
+
+  auto* anchor =
+      To<HTMLAnchorElement>(GetDocument().getElementById(AtomicString("link")));
+  ASSERT_NE(anchor, nullptr);
+
+  anchor->click();
+
+  // Verify navigation was synchronously blocked in Blink, logged a security
+  // error, and did not initiate a provisional load.
+  EXPECT_TRUE(ConsoleMessages().Contains(
+      StrCat({"Not allowed to navigate to direct-launch scheme '", kScheme,
+              "' from web contexts."})));
+  EXPECT_FALSE(GetDocument().GetFrame()->Loader().HasProvisionalNavigation());
+  EXPECT_EQ(GetDocument().Url(), KURL("https://example.com/test.html"));
+
+  SchemeRegistry::RemoveURLSchemeAsDirectLaunchForTest(kScheme);
+}
+
+TEST_F(FrameLoaderSimTest, DirectLaunchSchemeTargetBlankBlocked) {
+  const String kScheme("direct-launch-scheme");
+  SchemeRegistry::RegisterURLSchemeAsDirectLaunch(kScheme);
+
+  SimRequest main_request("https://example.com/test.html", "text/html");
+  LoadURL("https://example.com/test.html");
+  main_request.Complete(StrCat({"<a id='link' target='_blank' href='", kScheme,
+                                "://https://example.com/dest.html'>link</a>"}));
+
+  auto* anchor =
+      To<HTMLAnchorElement>(GetDocument().getElementById(AtomicString("link")));
+  ASSERT_NE(anchor, nullptr);
+
+  anchor->click();
+
+  // Verify navigation to new window was synchronously blocked in Blink and
+  // logged a security error.
+  EXPECT_TRUE(ConsoleMessages().Contains(
+      StrCat({"Not allowed to navigate to direct-launch scheme '", kScheme,
+              "' from web contexts."})));
+
+  SchemeRegistry::RemoveURLSchemeAsDirectLaunchForTest(kScheme);
+}
+
+class UserGestureNavigationTestWebFrameClient
+    : public frame_test_helpers::TestWebFrameClient {
+ public:
+  void BeginNavigation(std::unique_ptr<WebNavigationInfo> info) override {
+    last_has_user_gesture_ = info->url_request.HasUserGesture();
+  }
+
+  std::optional<bool> last_has_user_gesture() const {
+    return last_has_user_gesture_;
+  }
+
+ private:
+  std::optional<bool> last_has_user_gesture_;
+};
+
+TEST_F(FrameLoaderTest, StartNavigationDoesNotSpoofTargetUserGesture) {
+  UserGestureNavigationTestWebFrameClient client;
+  frame_test_helpers::WebViewHelper helper;
+  helper.Initialize(&client);
+
+  LocalFrame* target_frame = helper.LocalMainFrame()->GetFrame();
+
+  // Target frame has transient user activation.
+  LocalFrame::NotifyUserActivation(
+      target_frame, mojom::UserActivationNotificationType::kTest);
+  ASSERT_TRUE(LocalFrame::HasTransientUserActivation(target_frame));
+
+  // Initiator frame load request without user activation.
+  ResourceRequest resource_request(KURL("https://example.com/foo.html"));
+  resource_request.SetHasUserGesture(false);
+  FrameLoadRequest request(nullptr, resource_request);
+
+  target_frame->Loader().StartNavigation(request);
+
+  ASSERT_TRUE(client.last_has_user_gesture().has_value());
+  EXPECT_FALSE(client.last_has_user_gesture().value());
+}
+
+TEST_F(FrameLoaderTest, StartNavigationPropagatesInitiatorUserGesture) {
+  UserGestureNavigationTestWebFrameClient client;
+  frame_test_helpers::WebViewHelper helper;
+  helper.Initialize(&client);
+
+  LocalFrame* target_frame = helper.LocalMainFrame()->GetFrame();
+
+  // Target frame has NO transient user activation.
+  ASSERT_FALSE(LocalFrame::HasTransientUserActivation(target_frame));
+
+  // Initiator frame load request with user activation.
+  ResourceRequest resource_request(KURL("https://example.com/foo.html"));
+  resource_request.SetHasUserGesture(true);
+  FrameLoadRequest request(nullptr, resource_request);
+
+  target_frame->Loader().StartNavigation(request);
+
+  ASSERT_TRUE(client.last_has_user_gesture().has_value());
+  EXPECT_TRUE(client.last_has_user_gesture().value());
+}
+
+TEST_F(FrameLoaderTest, FrameLoadRequestCapturesInitiatorUserGesture) {
+  UserGestureNavigationTestWebFrameClient client;
+  frame_test_helpers::WebViewHelper helper;
+  helper.Initialize(&client);
+
+  LocalFrame* initiator_frame = helper.LocalMainFrame()->GetFrame();
+
+  // 1. Without user activation on initiator.
+  ASSERT_FALSE(LocalFrame::HasTransientUserActivation(initiator_frame));
+  FrameLoadRequest request1(
+      initiator_frame->DomWindow(),
+      ResourceRequest(KURL("https://example.com/foo.html")));
+  EXPECT_FALSE(request1.GetResourceRequest().HasUserGesture());
+
+  // 2. With user activation on initiator.
+  LocalFrame::NotifyUserActivation(
+      initiator_frame, mojom::UserActivationNotificationType::kTest);
+  ASSERT_TRUE(LocalFrame::HasTransientUserActivation(initiator_frame));
+  FrameLoadRequest request2(
+      initiator_frame->DomWindow(),
+      ResourceRequest(KURL("https://example.com/foo.html")));
+  EXPECT_TRUE(request2.GetResourceRequest().HasUserGesture());
 }
 
 }  // namespace blink

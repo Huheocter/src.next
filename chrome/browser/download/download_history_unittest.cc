@@ -37,11 +37,15 @@
 #include "extensions/buildflags/buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
 #include "chrome/browser/extensions/api/downloads/downloads_api.h"
 #endif
 
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
+#include "base/files/file_util.h"
+#include "base/files/scoped_temp_dir.h"
+#include "base/test/android/content_uri_test_utils.h"
+#else
 #include "chrome/browser/download/download_item_web_app_data.h"
 #endif
 
@@ -68,13 +72,16 @@ enum class LoadDownloadRowResult {
 struct CreateDownloadHistoryEntry {
   explicit CreateDownloadHistoryEntry(
       const history::DownloadRow& row,
-      LoadDownloadRowResult result = LoadDownloadRowResult::kCreateDownload) {
+      LoadDownloadRowResult result = LoadDownloadRowResult::kCreateDownload,
+      const base::FilePath& display_name = base::FilePath()) {
     this->row = row;
     this->result = result;
+    this->display_name = display_name;
   }
 
   history::DownloadRow row;
   LoadDownloadRowResult result;
+  base::FilePath display_name;
 };
 
 class FakeHistoryAdapter : public DownloadHistory::HistoryAdapter {
@@ -187,7 +194,7 @@ class FakeHistoryAdapter : public DownloadHistory::HistoryAdapter {
   void ExpectNoDownloadsRemoved() {
     DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
     content::RunAllPendingInMessageLoop(content::BrowserThread::UI);
-    EXPECT_EQ(0, static_cast<int>(remove_downloads_.size()));
+    EXPECT_EQ(0u, remove_downloads_.size());
   }
 
   void ExpectDownloadsRemoved(const IdSet& ids) {
@@ -226,7 +233,11 @@ class DownloadHistoryTest : public testing::Test {
   DownloadHistoryTest& operator=(const DownloadHistoryTest&) = delete;
 
  protected:
-  void TearDown() override { download_history_.reset(); }
+  void TearDown() override {
+    history_ = nullptr;
+    manager_observer_ = nullptr;
+    download_history_.reset();
+  }
 
   NiceMock<content::MockDownloadManager>& manager() { return *manager_.get(); }
   download::MockDownloadItem& item(size_t index) { return *items_[index]; }
@@ -241,7 +252,9 @@ class DownloadHistoryTest : public testing::Test {
   }
 
   content::MockDownloadManager::CreateDownloadItemAdapter
-  GetCreateDownloadItemAdapterFromDownloadRow(const history::DownloadRow& row) {
+  GetCreateDownloadItemAdapterFromDownloadRow(
+      const history::DownloadRow& row,
+      const base::FilePath& display_name = base::FilePath()) {
     return content::MockDownloadManager::CreateDownloadItemAdapter(
         row.guid, history::ToContentDownloadId(row.id), row.current_path,
         row.target_path, row.url_chain, row.referrer_url,
@@ -253,7 +266,8 @@ class DownloadHistoryTest : public testing::Test {
         history::ToContentDownloadDangerType(row.danger_type),
         history::ToContentDownloadInterruptReason(row.interrupt_reason),
         row.opened, row.last_access_time, row.transient,
-        history::ToContentReceivedSlices(row.download_slice_info));
+        history::ToContentReceivedSlices(row.download_slice_info),
+        display_name);
   }
 
   // Creates the DownloadHistory. If |return_null_item| is true, |manager_|
@@ -269,7 +283,8 @@ class DownloadHistoryTest : public testing::Test {
     for (const auto& entry : entries) {
       rows.emplace_back(entry.row);
       content::MockDownloadManager::CreateDownloadItemAdapter adapter =
-          GetCreateDownloadItemAdapterFromDownloadRow(entry.row);
+          GetCreateDownloadItemAdapterFromDownloadRow(entry.row,
+                                                      entry.display_name);
       switch (entry.result) {
         case LoadDownloadRowResult::kRemoveDownload:
           EXPECT_CALL(manager(), MockCreateDownloadItem(adapter))
@@ -291,7 +306,7 @@ class DownloadHistoryTest : public testing::Test {
     EXPECT_CALL(manager(), GetAllDownloads(_)).WillRepeatedly(Return());
     download_history_ = std::make_unique<DownloadHistory>(
         &manager(), std::unique_ptr<DownloadHistory::HistoryAdapter>(history_));
-    content::RunAllPendingInMessageLoop(content::BrowserThread::UI);
+    task_environment_.RunUntilIdle();
     history_->ExpectQueryDownloadsDone();
   }
 
@@ -469,7 +484,7 @@ class DownloadHistoryTest : public testing::Test {
     EXPECT_CALL(manager(), GetDownload(row->id))
         .WillRepeatedly(Return(&item(index)));
     EXPECT_CALL(item(index), IsTemporary()).WillRepeatedly(Return(false));
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
     new extensions::DownloadedByExtension(&item(index), row->by_ext_id,
                                           row->by_ext_name);
 #endif
@@ -501,10 +516,9 @@ class DownloadHistoryTest : public testing::Test {
   content::BrowserTaskEnvironment task_environment_;
   std::vector<std::unique_ptr<StrictMockDownloadItem>> items_;
   std::unique_ptr<NiceMock<content::MockDownloadManager>> manager_;
-  raw_ptr<FakeHistoryAdapter, DanglingUntriaged> history_ = nullptr;
+  raw_ptr<FakeHistoryAdapter> history_ = nullptr;
   std::unique_ptr<DownloadHistory> download_history_;
-  raw_ptr<content::DownloadManager::Observer, DanglingUntriaged>
-      manager_observer_ = nullptr;
+  raw_ptr<content::DownloadManager::Observer> manager_observer_ = nullptr;
   size_t download_created_index_ = 0;
   base::test::ScopedFeatureList feature_list_;
   TestingProfile profile_;
@@ -861,6 +875,31 @@ TEST_F(DownloadHistoryTest, CreateInProgressDownload) {
   EXPECT_FALSE(DownloadHistory::IsPersisted(&item(0)));
 }
 
+// Test that in-progress save package updates are only persisted when fields
+// actually change.
+TEST_F(DownloadHistoryTest, InProgressSavePackageNoopSecondUpdate) {
+  CreateDownloadHistory({});
+
+  history::DownloadRow row;
+  InitBasicItem(FILE_PATH_LITERAL("/foo/bar.pdf"), "http://example.com/bar.pdf",
+                "http://example.com/referrer.html",
+                download::DownloadItem::IN_PROGRESS, &row);
+  EXPECT_CALL(item(0), IsSavePackageDownload()).WillRepeatedly(Return(true));
+
+  // Save package downloads are persisted even while in progress.
+  CallOnDownloadCreated(0);
+  ExpectDownloadCreated(row);
+
+  EXPECT_CALL(item(0), GetReceivedBytes()).WillRepeatedly(Return(200));
+  item(0).NotifyObserversDownloadUpdated();
+  row.received_bytes = 200;
+  ExpectDownloadUpdated(row, false);
+
+  // No additional update should be issued if the state is unchanged.
+  item(0).NotifyObserversDownloadUpdated();
+  ExpectNoDownloadUpdated();
+}
+
 // Test that in-progress download already in history will be updated once it
 // becomes non-resumable.
 TEST_F(DownloadHistoryTest, InProgressHistoryItemBecomesNonResumable) {
@@ -912,7 +951,7 @@ TEST_F(DownloadHistoryTest, CreateLargeDataURLCompletedItem) {
 
   history::DownloadRow row;
   std::string data_url = "data:text/html,";
-  data_url.append(std::string(2048, 'a'));
+  data_url.append(std::string(10000, 'a'));
   InitBasicItem(FILE_PATH_LITERAL("/foo/bar.pdf"), data_url.c_str(),
                 "http://example.com/referrer.html",
                 download::DownloadItem::IN_PROGRESS, &row);
@@ -926,7 +965,7 @@ TEST_F(DownloadHistoryTest, CreateLargeDataURLCompletedItem) {
   EXPECT_CALL(item(0), GetState())
       .WillRepeatedly(Return(download::DownloadItem::COMPLETE));
   row.state = history::DownloadState::COMPLETE;
-  data_url.resize(1024);
+  data_url.resize(8192);
   row.url_chain.back() = GURL(data_url);
   item(0).NotifyObserversDownloadUpdated();
   ExpectDownloadCreated(row);
@@ -1000,7 +1039,78 @@ TEST_F(DownloadHistoryTest,
   EXPECT_TRUE(DownloadHistory::IsPersisted(&item(1)));
 }
 
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
+// Test loading history download rows with content URIs retrieves display names.
+TEST_F(DownloadHistoryTest, LoadContentUriDownloads) {
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+
+  // 1. Test a content document URI (handled by DownloadDocumentUriBridge).
+  base::FilePath doc_file = temp_dir.GetPath().AppendASCII("test_doc_file.txt");
+  ASSERT_TRUE(base::WriteFile(doc_file, "test content"));
+  std::optional<base::FilePath> doc_uri =
+      base::test::android::GetInMemoryContentDocumentUriFromCacheDirFilePath(
+          doc_file);
+  ASSERT_TRUE(doc_uri.has_value());
+  ASSERT_TRUE(doc_uri->IsContentUri());
+
+  history::DownloadRow row0;
+  InitBasicItem(doc_uri->value().c_str(), "http://example.com/doc.txt",
+                "http://example.com/referrer.html",
+                download::DownloadItem::COMPLETE, &row0);
+
+  // 2. Test a FileProvider content URI (handled by DownloadCollectionBridge).
+  base::FilePath collection_file =
+      temp_dir.GetPath().AppendASCII("test_collection_file.txt");
+  ASSERT_TRUE(base::WriteFile(collection_file, "test content"));
+  std::optional<base::FilePath> collection_uri =
+      base::test::android::GetContentUriFromCacheDirFilePath(collection_file);
+  ASSERT_TRUE(collection_uri.has_value());
+  ASSERT_TRUE(collection_uri->IsContentUri());
+
+  history::DownloadRow row1;
+  InitBasicItem(collection_uri->value().c_str(),
+                "http://example.com/collection.txt",
+                "http://example.com/referrer.html",
+                download::DownloadItem::COMPLETE, &row1);
+
+  std::vector<CreateDownloadHistoryEntry> rows = {
+      CreateDownloadHistoryEntry(row0, LoadDownloadRowResult::kCreateDownload,
+                                 base::FilePath("test_doc_file.txt")),
+      CreateDownloadHistoryEntry(row1, LoadDownloadRowResult::kCreateDownload,
+                                 base::FilePath("test_collection_file.txt"))};
+  CreateDownloadHistory(std::move(rows));
+  ExpectNoDownloadCreated();
+}
+
+// Test loading history download rows with content URIs when
+// kRetrieveDisplayNamesForHistoryDownloads is disabled.
+TEST_F(DownloadHistoryTest, LoadContentUriDownloadsFeatureDisabled) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndDisableFeature(
+      download::features::kRetrieveDisplayNamesForHistoryDownloads);
+
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+  base::FilePath doc_file = temp_dir.GetPath().AppendASCII("test_doc_file.txt");
+  ASSERT_TRUE(base::WriteFile(doc_file, "test content"));
+  std::optional<base::FilePath> doc_uri =
+      base::test::android::GetInMemoryContentDocumentUriFromCacheDirFilePath(
+          doc_file);
+  ASSERT_TRUE(doc_uri.has_value());
+  ASSERT_TRUE(doc_uri->IsContentUri());
+
+  history::DownloadRow row0;
+  InitBasicItem(doc_uri->value().c_str(), "http://example.com/doc.txt",
+                "http://example.com/referrer.html",
+                download::DownloadItem::COMPLETE, &row0);
+
+  std::vector<CreateDownloadHistoryEntry> rows = {CreateDownloadHistoryEntry(
+      row0, LoadDownloadRowResult::kCreateDownload, base::FilePath())};
+  CreateDownloadHistory(std::move(rows));
+  ExpectNoDownloadCreated();
+}
+#else
 // Test that web app id is inserted into history.
 TEST_F(DownloadHistoryTest, ByWebAppId) {
   // Create a fresh item not from download DB

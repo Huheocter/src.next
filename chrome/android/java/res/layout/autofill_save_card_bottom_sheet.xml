@@ -4,26 +4,12 @@ Copyright 2023 The Chromium Authors
 Use of this source code is governed by a BSD-style license that can be
 found in the LICENSE file.
 -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:orientation="vertical"
+    android:id="@+id/autofill_save_card_scroll_view"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
-
-  <ImageView
-      android:importantForAccessibility="no"
-      android:layout_width="wrap_content"
-      android:layout_height="wrap_content"
-      android:layout_gravity="center_horizontal"
-      android:layout_marginTop="@dimen/autofill_bottom_sheet_drag_handlebar_spacing_top"
-      android:src="@drawable/drag_handlebar"
-      app:tint="@macro/drag_handlebar_color" />
-
-  <ScrollView
-      android:id="@+id/autofill_save_card_scroll_view"
-      android:layout_width="match_parent"
-      android:layout_height="wrap_content">
+    android:layout_height="wrap_content">
 
     <LinearLayout
         android:orientation="vertical"
@@ -83,6 +69,7 @@ found in the LICENSE file.
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textAppearance="@style/TextAppearance.TextMedium.Primary"
+            android:textDirection="locale"
             android:layout_marginStart="@dimen/autofill_bottom_sheet_credit_card_spacing"
             android:layout_toEndOf="@id/autofill_save_card_credit_card_icon"
             tools:text="Bobpay 1234" />
@@ -91,10 +78,19 @@ found in the LICENSE file.
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textAppearance="@style/TextAppearance.TextMedium.Primary"
+            android:textDirection="locale"
             android:layout_below="@+id/autofill_save_card_credit_card_label"
             android:layout_marginStart="@dimen/autofill_bottom_sheet_credit_card_spacing"
             android:layout_toEndOf="@id/autofill_save_card_credit_card_icon"
             tools:text="08 / 29" />
+        <ImageView
+            android:id="@+id/autofill_save_card_google_pay_pill_logo"
+            android:layout_width="@dimen/autofill_bottom_sheet_google_pay_pill_width"
+            android:layout_height="wrap_content"
+            android:layout_alignParentEnd="true"
+            android:layout_centerVertical="true"
+            android:adjustViewBounds="true"
+            android:importantForAccessibility="no" />
       </RelativeLayout>
 
       <org.chromium.ui.widget.TextViewWithClickableSpans
@@ -154,4 +150,3 @@ found in the LICENSE file.
       </FrameLayout>
     </LinearLayout>
   </ScrollView>
-</LinearLayout>
