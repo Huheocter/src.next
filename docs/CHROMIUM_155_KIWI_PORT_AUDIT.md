@@ -37,6 +37,22 @@ Findings:
 
 Decision: **do not merge the legacy HomepageManager.java**. Treat Chromium 155's implementation as the base and port only a narrowly defined, testable Kiwi behavior after its settings UI and preference contract are mapped.
 
+## Third feature review: close app after last tab
+
+A follow-up source comparison confirmed that Chromium 155 already has a zero-tab close policy, but it is **not equivalent** to Kiwi's legacy preference:
+
+- Kiwi 105 adds static `HomepageManager.shouldCloseAppWithZeroTabs()`, which reads the app preference `close_browser_after_last_tab` and defaults to `false`.
+- Chromium 155's `HomepageManager.shouldCloseAppWithZeroTabs()` is an instance method. It returns true when the homepage is enabled and the resolved homepage is not the NTP; it does not read Kiwi's `close_browser_after_last_tab` key.
+- Chromium 155 calls this method from `ChromeTabbedActivity` when the total tab count reaches zero. That caller has also evolved to account for pending closure and multi-window window-removal behavior.
+
+Decision: **do not replace Chromium 155's policy with the old static method**. A faithful Kiwi port needs to add/migrate the preference, expose it through the current settings UI, define its precedence relative to homepage/NTP behavior, and add tests for normal/incognito tabs, pending closure, and multi-window. Merely changing the method would silently change the zero-tab lifecycle and could cause unexpected app exits.
+
+Relevant source paths:
+- Legacy: `chrome/android/java/src/org/chromium/chrome/browser/homepage/HomepageManager.java` and `chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java` on `kiwi`.
+- Current: same paths on `chromium`.
+
+This is a verified compatibility difference, not an implemented feature.
+
 ## Second feature review: classic tab switcher and bottom toolbar
 
 The legacy patch modifies tab-list and tab-grid binding/layout behavior, reads `active_tabswitcher` (`classic` / `grid`), and changes tab-group behavior when `enable_bottom_toolbar` is set.
