@@ -38,3 +38,15 @@ These are review flags, not a claim that every listed change is necessarily expl
 - No automatic rebase/cherry-pick of the 217-file patch onto Chromium 155.
 - No APK is advertised until a successful workflow artifact is available and verified.
 - The port remains incomplete until compilation and install/runtime checks pass.
+
+
+## Latest automation update
+
+The previous safe-trial workflow attempted a direct cherry-pick and failed as expected because the patch conflicts with Chromium 155. It has been replaced with a read-only inventory workflow; it no longer attempts a cherry-pick or pushes code.
+
+- Inventory script: `tools/kiwi_port_inventory.py`
+- Workflow: `.github/workflows/port_kiwi_patch_chromium_155.yml`
+- Workflow output: a categorized `kiwi-port-inventory.md` artifact listing every changed path from the legacy patch.
+- To run it: open the repository's **Actions** tab, select **Audit legacy Kiwi patch for Chromium 155**, choose **Run workflow**, and select branch `upgrade/kiwi-chromium-155-port`.
+
+This inventory is a planning/triage step only. It does not port features, compile Chromium, or create an APK. The next implementation step is to select one small user-facing feature, port it against current APIs, and validate it independently before expanding scope.
