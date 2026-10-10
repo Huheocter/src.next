@@ -1,38 +1,31 @@
-name: "Port Kiwi patch onto Chromium 155 (safe trial)"
+name: "Audit legacy Kiwi patch for Chromium 155"
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  port:
+  inventory:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout full history
+      - name: Checkout port branch with history
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: upgrade/kiwi-chromium-155-port
-      - name: Configure Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-      - name: Attempt to apply the original Kiwi patch
-        shell: bash
-        run: |
-          set -euo pipefail
-          git fetch origin chromium kiwi
-          git checkout -B upgrade/kiwi-chromium-155-port origin/chromium
-          if git cherry-pick 543d5c3b5be0dd6bd84b7f2fb05618093d0494f8; then
-            echo "KIWI_PATCH_APPLIED=true" >> "$GITHUB_ENV"
-          else
-            echo "::error::The original Kiwi patch conflicts with Chromium 155. No branch was pushed."
-            git status --short
-            git cherry-pick --abort || true
-            exit 1
-          fi
-      - name: Push isolated trial branch
-        if: success()
-        run: git push origin HEAD:upgrade/kiwi-chromium-155-port
+
+      - name: Fetch legacy Kiwi history
+        run: git fetch origin chromium kiwi
+
+      - name: Generate categorized inventory
+        run: python3 tools/kiwi_port_inventory.py
+
+      - name: Upload inventory report
+        uses: actions/upload-artifact@v4
+        with:
+          name: kiwi-chromium-155-port-inventory
+          path: kiwi-port-inventory.md
+          if-no-files-found: error
+          retention-days: 14
