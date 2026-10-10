@@ -1,0 +1,52 @@
+name: "Audit legacy Kiwi patch for Chromium 155"
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - upgrade/kiwi-chromium-155-port
+    paths:
+      - ".github/workflows/port_kiwi_patch_chromium_155.yml"
+      - "tools/kiwi_port_inventory.py"
+      - "tools/test_kiwi_port_inventory.py"
+      - "tools/kiwi_patch_risk_scan.py"
+      - "tools/test_kiwi_patch_risk_scan.py"
+      - "docs/CHROMIUM_155_KIWI_PORT_AUDIT.md"
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout port branch with history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: upgrade/kiwi-chromium-155-port
+
+      - name: Fetch legacy Kiwi history
+        run: git fetch origin chromium kiwi
+
+      - name: Test inventory path categorization
+        run: python3 -m unittest tools/test_kiwi_port_inventory.py -v
+
+      - name: Test patch risk scanner
+        run: python3 -m unittest tools/test_kiwi_patch_risk_scan.py -v
+
+      - name: Generate categorized inventory
+        run: python3 tools/kiwi_port_inventory.py
+
+      - name: Scan added lines for review flags
+        run: python3 tools/kiwi_patch_risk_scan.py
+
+      - name: Upload inventory report
+        uses: actions/upload-artifact@v4
+        with:
+          name: kiwi-chromium-155-port-inventory
+          path: |
+            kiwi-port-inventory.md
+            kiwi-patch-risk-scan.md
+          if-no-files-found: error
+          retention-days: 14
