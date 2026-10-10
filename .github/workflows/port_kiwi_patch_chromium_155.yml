@@ -2,6 +2,9 @@ name: "Port Kiwi patch onto Chromium 155 (safe trial)"
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - upgrade/kiwi-chromium-155-port
 
 permissions:
   contents: write
