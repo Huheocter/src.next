@@ -33,14 +33,30 @@ Findings:
 - Kiwi's legacy file has unconditional branches such as `if (true) return "chrome://newtab";` and an unconditional preference read from the app preference key `active_homepage`. Those override the normal partner/custom-homepage selection logic.
 - Kiwi also adds `shouldCloseAppWithZeroTabs()`, reading `close_browser_after_last_tab`; this is a separate behavior and must be traced to the zero-tab lifecycle before it can be ported.
 - Chromium 155 has materially changed this class: it uses `GURL`, native homepage policy synchronization, `ChromeSharedPreferences`, NTP URL resolvers, incognito-aware homepage resolution, and navigation APIs. Copying the old class or its methods wholesale would break current behavior and may not compile.
-- The old custom-homepage behavior is not ported in this commit. The safe implementation needs a dedicated preference/migration design, URL validation, policy precedence, incognito semantics, and unit tests. The `active_homepage` shortcut must not be added without tracing all readers/writers and validating URLs.
+- The old custom-homepage behavior is not ported yet. A safe implementation needs a dedicated preference/migration design, URL validation, policy precedence, incognito semantics, and unit tests. The `active_homepage` shortcut must not be added without tracing all readers/writers and validating URLs.
 
 Decision: **do not merge the legacy HomepageManager.java**. Treat Chromium 155's implementation as the base and port only a narrowly defined, testable Kiwi behavior after its settings UI and preference contract are mapped.
+
+## Second feature review: classic tab switcher and bottom toolbar
+
+The legacy patch modifies tab-list and tab-grid binding/layout behavior, reads `active_tabswitcher` (`classic` / `grid`), and changes tab-group behavior when `enable_bottom_toolbar` is set.
+
+Risks and required work:
+- The old patch assumes Chromium 105-era tab-list coordinator and layout behavior. Restoring those snippets without checking Chromium 155's current classes, model properties, and lifecycle could create compile failures or subtle tab-selection/scroll regressions.
+- The tab-switcher preference is read in multiple UI layers, so porting only one conditional would leave inconsistent behavior between the grid dialog, list, and selection editor.
+- The bottom-toolbar flag affects tab-group state and cannot be treated as a purely visual layout change; its interactions with tab-strip visibility, multi-window mode, orientation, and tab creation must be tested.
+- These changes are not applied to the Chromium 155 branch yet. The next code change should be a small, coherent vertical slice (preference + current UI integration + tests), not a partial copy of the old layout snippets.
+
+## Build feasibility gate
+
+The official Chromium Android build guide lists a 64-bit Linux machine, at least 8 GB RAM (more than 16 GB recommended), and at least 100 GB free disk as system requirements. A normal Android browser build uses GN and then `autoninja -C out/Default chrome_public_apk`. Therefore a green inventory workflow is not evidence of a build, and a standard small hosted runner should not be assumed capable of producing the full APK without a verified build environment.
+
+Reference: https://chromium.googlesource.com/chromium/src/+/main/docs/android_build_instructions.md
 
 ## Port sequence
 
 1. Inventory and classify each legacy change into user-facing Kiwi functionality, required build/resource wiring, Chromium compatibility adaptation, or obsolete/unwanted behavior.
-2. Establish the Chromium 155 baseline with a clean Android build before applying Kiwi changes, so upstream build failures can be distinguished from port regressions.
+2. Establish the Chromium 155 baseline with a clean Android build in a suitably provisioned Linux build environment before applying Kiwi changes, so upstream build failures can be distinguished from port regressions.
 3. Port extension support in small, reviewable commits: build targets/resources, extension lifecycle and protocol handling, permission parsing, then Android UI. Preserve Chromium 155 security checks unless a specific Kiwi requirement justifies a narrowly scoped, reviewed change.
 4. Port Android UX separately: bottom toolbar, tab switcher, menu/settings, homepage, icons and strings. Update to current APIs instead of restoring old classes wholesale.
 5. Port Blink/night-mode changes last, with targeted tests and a clear reason for each rendering-engine modification.
