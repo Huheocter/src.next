@@ -31,7 +31,7 @@ def classify(path: str) -> str:
 
 def main() -> None:
     git("cat-file", "-e", f"{PATCH}^{{commit}}")
-    rows = [line.split("\\t", 1) for line in git("diff", "--name-status", f"{PATCH}^", PATCH).splitlines()]
+    rows = [line.split("\t", 1) for line in git("diff", "--name-status", f"{PATCH}^", PATCH).splitlines()]
     groups = defaultdict(list)
     for row in rows:
         status, path = row[0], row[-1]
@@ -55,7 +55,7 @@ def main() -> None:
         lines += ["", f"## {area}", ""]
         for status, path in sorted(files, key=lambda item: item[1]):
             lines.append(f"- {status} {path}")
-    OUT.write_text("\\n".join(lines) + "\\n", encoding="utf-8")
+    OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"Wrote {OUT} with {len(rows)} changed paths across {len(groups)} areas.")
 
 
