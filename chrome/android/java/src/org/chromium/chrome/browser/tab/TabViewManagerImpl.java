@@ -4,23 +4,36 @@
 
 package org.chromium.chrome.browser.tab;
 
+import android.app.Activity;
 import android.graphics.Rect;
+import android.util.Pair;
 import android.util.SparseIntArray;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
 import androidx.annotation.ColorInt;
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.base.supplier.DestroyableObservableSupplier;
-import org.chromium.chrome.browser.browser_controls.BrowserControlsMarginSupplier;
+import org.chromium.base.lifetime.Destroyable;
+import org.chromium.base.supplier.ObservableSuppliers;
+import org.chromium.base.supplier.SettableMonotonicObservableSupplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.ActivityUtils;
+import org.chromium.chrome.browser.app.ChromeActivity;
+import org.chromium.chrome.browser.browser_controls.BrowserControlsMarginAdapter;
+import org.chromium.ui.base.WindowAndroid;
 
 import java.util.Comparator;
 import java.util.PriorityQueue;
 
 /**
  * This class is responsible for displaying custom {@link View}s on top of {@link Tab}'s Content
- * view. Users that want to display a custom {@link View} should:
+ * view.
+ *
+ * <pre>
+ * Users that want to display a custom {@link View} should:
  *     1. Implement {@link TabViewProvider}
  *     2. Add an entry to {@link TabViewProvider.Type}
  *     3. Add their {@link TabViewProvider.Type} to {@link #PRIORITIZED_TAB_VIEW_PROVIDER_TYPES}
@@ -29,7 +42,9 @@ import java.util.PriorityQueue;
  *     4. Use {@link Tab#getTabViewManager#addTabViewProvider} and
  *        {@link Tab#getTabViewManager#removeTabViewProvider} to add and remove their
  *        {@link TabViewProvider}.
+ * </pre>
  */
+@NullMarked
 class TabViewManagerImpl implements TabViewManager, Comparator<TabViewProvider> {
     /**
      * A prioritized list of all {@link TabViewProvider.Type}s, from most important to least
@@ -56,11 +71,13 @@ class TabViewManagerImpl implements TabViewManager, Comparator<TabViewProvider> 
         }
     }
 
-    private PriorityQueue<TabViewProvider> mTabViewProviders;
-    private TabImpl mTab;
-    private View mCurrentView;
-    private DestroyableObservableSupplier<Rect> mMarginSupplier;
     private final Rect mViewMargins = new Rect();
+    private final PriorityQueue<TabViewProvider> mTabViewProviders;
+    private final TabImpl mTab;
+    private @Nullable View mCurrentView;
+    private final SettableMonotonicObservableSupplier<Pair<Integer, Integer>>
+            mBrowserControlsMarginsSupplier = ObservableSuppliers.createMonotonic();
+    private @Nullable Destroyable mMarginsAdapter;
 
     TabViewManagerImpl(TabImpl tab) {
         mTab = tab;
@@ -68,19 +85,26 @@ class TabViewManagerImpl implements TabViewManager, Comparator<TabViewProvider> 
     }
 
     private void initMarginSupplier() {
-        if (mTab.getActivity() == null
-                || mTab.getActivity().isActivityFinishingOrDestroyed()
-                || mMarginSupplier != null) {
+        WindowAndroid window = mTab.getWindowAndroid();
+        Activity activity =
+                window != null && window.getActivity() != null ? window.getActivity().get() : null;
+        if (activity == null
+                || ActivityUtils.isActivityFinishingOrDestroyed(activity)
+                || mMarginsAdapter != null) {
             return;
         }
 
-        mMarginSupplier =
-                new BrowserControlsMarginSupplier(mTab.getActivity().getBrowserControlsManager());
-        mMarginSupplier.addObserver(this::updateViewMargins);
-        // Update margins immediately if available rather than waiting for a posted notification.
-        // Waiting for a posted notification could allow a layout pass to occur before the margins
-        // are set.
-        updateViewMargins(mMarginSupplier.get());
+        if (activity instanceof ChromeActivity chromeActivity) {
+            mMarginsAdapter =
+                    BrowserControlsMarginAdapter.create(
+                            chromeActivity.getBrowserControlsManager(),
+                            mBrowserControlsMarginsSupplier);
+            // Update margins immediately if available rather than waiting for a posted
+            // notification. Waiting for a posted notification could allow a layout pass to occur
+            // before the margins are set.
+            mBrowserControlsMarginsSupplier.addSyncObserverAndCallIfNonNull(
+                    this::updateViewMargins);
+        }
     }
 
     /**
@@ -121,8 +145,6 @@ class TabViewManagerImpl implements TabViewManager, Comparator<TabViewProvider> 
     }
 
     private void updateCurrentTabViewProvider(TabViewProvider previousTabViewProvider) {
-        if (mTab == null) return;
-
         TabViewProvider currentTabViewProvider = mTabViewProviders.peek();
         if (currentTabViewProvider != previousTabViewProvider) {
             View view = null;
@@ -143,10 +165,23 @@ class TabViewManagerImpl implements TabViewManager, Comparator<TabViewProvider> 
         }
     }
 
-    private void updateViewMargins(Rect viewMargins) {
+    private void updateViewMargins(Pair<Integer, Integer> viewMargins) {
         if (viewMargins == null) return;
 
-        mViewMargins.set(viewMargins);
+        int topMargin = viewMargins.first;
+        int bottomMargin = viewMargins.second;
+
+        int leftMargin = 0;
+        int rightMargin = 0;
+        if (mCurrentView != null) {
+            ViewGroup.LayoutParams oldlayoutParams = mCurrentView.getLayoutParams();
+            if (oldlayoutParams instanceof ViewGroup.MarginLayoutParams oldMarginLayoutParams) {
+                leftMargin = oldMarginLayoutParams.leftMargin;
+                rightMargin = oldMarginLayoutParams.rightMargin;
+            }
+        }
+
+        mViewMargins.set(leftMargin, topMargin, rightMargin, bottomMargin);
         updateViewMargins();
     }
 
@@ -180,7 +215,6 @@ class TabViewManagerImpl implements TabViewManager, Comparator<TabViewProvider> 
         TabViewProvider currentTabViewProvider = mTabViewProviders.peek();
         if (currentTabViewProvider != null) currentTabViewProvider.onHidden();
         mTabViewProviders.clear();
-        if (mMarginSupplier != null) mMarginSupplier.destroy();
-        mTab = null;
+        if (mMarginsAdapter != null) mMarginsAdapter.destroy();
     }
 }

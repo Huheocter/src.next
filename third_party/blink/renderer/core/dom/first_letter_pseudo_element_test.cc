@@ -62,7 +62,7 @@ TEST_F(FirstLetterPseudoElementTest, EmptySpanOnly) {
   sample.setAttribute(html_names::kContenteditableAttr, keywords::kTrue);
   const PseudoElement* const first_letter =
       sample.GetPseudoElement(kPseudoIdFirstLetter);
-  // We should not have ::first-letter pseudo element because <p> has no text.
+  // We should not have ::first-letter pseudo-element because <p> has no text.
   // See |FirstLetterPseudoElement::FirstLetterTextLayoutObject()| should
   // return nullptr during rebuilding layout tree.
   EXPECT_FALSE(first_letter);
@@ -179,7 +179,7 @@ TEST_P(FirstLetterTextTest, All) {
   ComputedStyleBuilder builder(layout_body->StyleRef());
   builder.SetPseudoElementStyles(
       1 << (kPseudoIdFirstLetter - kFirstPublicPseudoId));
-  layout_body->SetStyle(builder.TakeStyle(),
+  layout_body->SetStyle(*builder.TakeStyle(),
                         LayoutObject::ApplyStyleChanges::kNo);
 
   LayoutText* layout_text =

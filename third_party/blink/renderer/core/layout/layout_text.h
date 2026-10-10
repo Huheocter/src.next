@@ -27,7 +27,6 @@
 
 #include "base/check_op.h"
 #include "base/dcheck_is_on.h"
-#include "base/memory/scoped_refptr.h"
 #include "base/notreached.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/text.h"
@@ -74,16 +73,11 @@ class CORE_EXPORT LayoutText : public LayoutObject {
 
   void Trace(Visitor*) const override;
 
-  static LayoutText* CreateEmptyAnonymous(Document&, const ComputedStyle*);
+  static LayoutText* CreateEmptyAnonymous(Document&, const ComputedStyle&);
 
   const char* GetName() const override {
     NOT_DESTROYED();
     return "LayoutText";
-  }
-
-  bool IsLayoutNGObject() const override {
-    NOT_DESTROYED();
-    return true;
   }
 
   bool IsTextFragment() const {
@@ -142,11 +136,27 @@ class CORE_EXPORT LayoutText : public LayoutObject {
 
   void QuadsInAncestorInternal(Vector<gfx::QuadF>&,
                                const LayoutBoxModelObject* ancestor,
-                               MapCoordinatesFlags) const final;
+                               MapCoordinatesFlags,
+                               BoxQuadType) const final;
   void AbsoluteQuadsForRange(Vector<gfx::QuadF>&,
                              unsigned start_offset = 0,
                              unsigned end_offset = INT_MAX) const;
-  gfx::RectF LocalBoundingBoxRectForAccessibility() const final;
+  gfx::RectF LocalBoundingBoxRectForAccessibility(
+      IncludeDescendants include_descendants) const final;
+
+  std::optional<bool> IgnoreWhitespaceForAccessibility() const {
+    NOT_DESTROYED();
+    if (has_cached_ignore_whitespace_for_accessibility_) {
+      return static_cast<bool>(ignore_whitespace_for_accessibility_);
+    }
+    return std::nullopt;
+  }
+
+  void SetIgnoreWhitespaceForAccessibility(bool value) const {
+    NOT_DESTROYED();
+    ignore_whitespace_for_accessibility_ = value;
+    has_cached_ignore_whitespace_for_accessibility_ = true;
+  }
 
   enum ClippingOption { kNoClipping, kClipToEllipsis };
   void LocalQuadsInFlippedBlocksDirection(Vector<gfx::QuadF>&,
@@ -188,7 +198,7 @@ class CORE_EXPORT LayoutText : public LayoutObject {
                                 TextOffsetMap& offset_map) const;
 
   PhysicalRect LocalSelectionVisualRect() const final;
-  PhysicalRect LocalCaretRect(int caret_offset) const override;
+  PhysicalRect LocalCaretRect(int caret_offset, CaretShape) const override;
 
   // Compute the rect and offset of text boxes for this LayoutText.
   struct TextBoxInfo {
@@ -218,8 +228,8 @@ class CORE_EXPORT LayoutText : public LayoutObject {
   bool IsBeforeNonCollapsedCharacter(unsigned) const;
   bool IsAfterNonCollapsedCharacter(unsigned) const;
 
-  virtual int CaretMinOffset() const;
-  virtual int CaretMaxOffset() const;
+  virtual wtf_size_t CaretMinOffset() const;
+  virtual wtf_size_t CaretMaxOffset() const;
   unsigned ResolvedTextLength() const;
 
   // True if any character remains after CSS white-space collapsing.
@@ -332,7 +342,7 @@ class CORE_EXPORT LayoutText : public LayoutObject {
 
   void InvalidateSubtreeLayoutForFontUpdates() override;
 
-  void DetachAbstractInlineTextBoxesIfNeeded();
+  void DetachAxHooksIfNeeded();
 
   // Returns the logical location of the first line box, and the logical height
   // of the LayoutText.
@@ -361,11 +371,20 @@ class CORE_EXPORT LayoutText : public LayoutObject {
 #endif
 
  protected:
-  void WillBeDestroyed() override;
+  void WillBeDestroyed(const ComputedStyle*) override;
 
-  void StyleWillChange(StyleDifference, const ComputedStyle&) final;
+  // Explicitly override so that we don't call LayoutObject::StyleWillChange.
+  void StyleWillChange(StyleDifference,
+                       const ComputedStyle* old_style,
+                       const ComputedStyle& new_style,
+                       StyleChangeContext&) override {
+    NOT_DESTROYED();
+  }
 
-  void StyleDidChange(StyleDifference, const ComputedStyle* old_style) override;
+  void StyleDidChange(StyleDifference,
+                      const ComputedStyle* old_style,
+                      const ComputedStyle& new_style,
+                      const StyleChangeContext&) override;
 
   void InLayoutNGInlineFormattingContextWillChange(bool) final;
 
@@ -438,7 +457,8 @@ class CORE_EXPORT LayoutText : public LayoutObject {
 
  private:
   ContentCaptureManager* GetOrResetContentCaptureManager();
-  void DetachAbstractInlineTextBoxes();
+  void DetachAxHooks();
+  void ClearBlockFlowCachedData();
 
   virtual unsigned NonCollapsedCaretMaxOffset() const;
 
@@ -447,6 +467,13 @@ class CORE_EXPORT LayoutText : public LayoutObject {
   unsigned has_abstract_inline_text_box_ : 1;
 
   unsigned has_variable_length_transform_ : 1;
+
+  // If the entire text is whitespace, the node may be ignored for
+  // accessibility. ignore_whitespace_for_accessibility_ caches whether
+  // this node is such an ignored node. Only meaningful if
+  // has_cached_ignore_whitespace_for_accessibility_ is true.
+  mutable unsigned ignore_whitespace_for_accessibility_ : 1 = 0;
+  mutable unsigned has_cached_ignore_whitespace_for_accessibility_ : 1 = 0;
 
   DOMNodeId node_id_ = kInvalidDOMNodeId;
 
@@ -465,15 +492,22 @@ class CORE_EXPORT LayoutText : public LayoutObject {
 };
 
 inline wtf_size_t LayoutText::FirstInlineFragmentItemIndex() const {
+  NOT_DESTROYED();
   if (!IsInLayoutNGInlineFormattingContext())
     return 0u;
   return first_fragment_item_index_;
 }
 
-inline void LayoutText::DetachAbstractInlineTextBoxesIfNeeded() {
+inline void LayoutText::DetachAxHooksIfNeeded() {
+  NOT_DESTROYED();
   if (has_abstract_inline_text_box_) [[unlikely]] {
-    DetachAbstractInlineTextBoxes();
+    DetachAxHooks();
   }
+  if (!IsInLayoutNGInlineFormattingContext()) {
+    return;
+  }
+
+  ClearBlockFlowCachedData();
 }
 
 template <>

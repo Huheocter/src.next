@@ -8,6 +8,9 @@
 #include <string>
 
 #include "chrome/browser/extensions/pack_extension_job.h"
+#include "extensions/buildflags/buildflags.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace base {
 class CommandLine;
@@ -16,6 +19,13 @@ class CommandLine;
 namespace extensions {
 
 // Initialization helpers for various Extension startup actions.
+//
+// Note: Callers of `PackExtension()` are responsible for ensuring an
+// `ExtensionsClient` is initialized (e.g. via `ScopedChromeExtensionsClient` in
+// standalone CLI handlers like `HandlePackExtensionSwitches()`, or via
+// `ChromeUnitTestSuite` in tests). `StartupHelper` does not own an
+// `ExtensionsClient` to prevent duplicate client initializations within the
+// same process.
 class StartupHelper : public PackExtensionJob::Client {
  public:
   StartupHelper();
@@ -27,24 +37,24 @@ class StartupHelper : public PackExtensionJob::Client {
 
   void OnPackSuccess(const base::FilePath& crx_path,
                      const base::FilePath& output_private_key_path) override;
-  void OnPackFailure(const std::string& error_message,
+  void OnPackFailure(const std::u16string& error_message,
                      ExtensionCreator::ErrorType type) override;
 
-  // Handle --pack-extension flag from the |cmd_line| by packing the specified
+  // Handle --pack-extension flag from the `cmd_line` by packing the specified
   // extension. Returns false if the pack job failed.
   // If the return value is false, a description of the problem may be written
-  // into |error|.
-  bool PackExtension(const base::CommandLine& cmd_line, std::string* error);
+  // into `error`.
+  bool PackExtension(const base::CommandLine& cmd_line, std::u16string* error);
 
   // Validates a crx at the path given by the --validate-extension flag - can
   // it be installed? Returns true if the crx is valid, or false otherwise.
   // If the return value is false, a description of the problem may be written
-  // into |error|.
+  // into `error`.
   bool ValidateCrx(const base::CommandLine& cmd_line, std::string* error);
 
  private:
   bool pack_job_succeeded_ = false;
-  std::string error_message_;
+  std::u16string error_message_;
 };
 
 }  // namespace extensions

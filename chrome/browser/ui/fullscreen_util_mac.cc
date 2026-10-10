@@ -5,7 +5,6 @@
 #include "chrome/browser/ui/fullscreen_util_mac.h"
 
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
@@ -16,23 +15,28 @@
 
 namespace fullscreen_utils {
 
-bool IsInContentFullscreen(BrowserWindowInterface* browser_window_interface) {
-  if (!browser_window_interface->GetExclusiveAccessManager()) {
+bool IsInContentFullscreen(
+    const BrowserWindowInterface* browser_window_interface) {
+  // Const cast because ExclusiveAccessManager and its accessors are not
+  // const-correct.
+  auto* const manager = ExclusiveAccessManager::From(
+      const_cast<BrowserWindowInterface*>(browser_window_interface));
+  if (!manager) {
     return false;
   }
-  FullscreenController* const controller =
-      browser_window_interface->GetExclusiveAccessManager()
-          ->fullscreen_controller();
+  FullscreenController* const controller = manager->fullscreen_controller();
   return controller && (controller->IsWindowFullscreenForTabOrPending() ||
                         controller->IsExtensionFullscreenOrPending());
 }
 
-bool IsAlwaysShowToolbarEnabled(const Browser* browser) {
-  if (web_app::AppBrowserController::IsWebApp(browser)) {
-    const web_app::AppBrowserController* controller = browser->app_controller();
+bool IsAlwaysShowToolbarEnabled(
+    const BrowserWindowInterface* browser_window_interface) {
+  if (web_app::AppBrowserController::IsWebApp(browser_window_interface)) {
+    const web_app::AppBrowserController* controller =
+        web_app::AppBrowserController::From(browser_window_interface);
     return controller->AlwaysShowToolbarInFullscreen();
   }
-  return browser->profile()->GetPrefs()->GetBoolean(
+  return browser_window_interface->GetProfile()->GetPrefs()->GetBoolean(
       prefs::kShowFullscreenToolbar);
 }
 

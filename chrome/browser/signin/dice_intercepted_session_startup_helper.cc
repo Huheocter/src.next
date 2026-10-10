@@ -4,17 +4,17 @@
 
 #include "chrome/browser/signin/dice_intercepted_session_startup_helper.h"
 
+#include <algorithm>
 #include <vector>
 
-#include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "chrome/browser/signin/account_reconcilor_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/ui/browser_navigator.h"
-#include "chrome/browser/ui/browser_navigator_params.h"
+#include "chrome/browser/ui/navigator/browser_navigator.h"
+#include "chrome/browser/ui/navigator/browser_navigator_params.h"
 #include "chrome/common/webui_url_constants.h"
 #include "components/signin/public/base/multilogin_parameters.h"
 #include "components/signin/public/base/signin_metrics.h"
@@ -25,6 +25,7 @@
 #include "google_apis/gaia/gaia_auth_fetcher.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "google_apis/gaia/google_service_auth_error.h"
+#include "ui/base/page_transition_types.h"
 #include "url/gurl.h"
 
 namespace {
@@ -34,7 +35,7 @@ bool CookieInfoContains(const signin::AccountsInCookieJarInfo& cookie_info,
                         const CoreAccountId& account_id) {
   const std::vector<gaia::ListedAccount>& accounts =
       cookie_info.GetPotentiallyInvalidSignedInAccounts();
-  return base::Contains(accounts, account_id, &gaia::ListedAccount::id);
+  return std::ranges::contains(accounts, account_id, &gaia::ListedAccount::id);
 }
 
 }  // namespace
@@ -74,7 +75,8 @@ void DiceInterceptedSessionStartupHelper::Startup(base::OnceClosure callback) {
         &DiceInterceptedSessionStartupHelper::MoveTab, base::Unretained(this)));
     // Adding accounts to the cookies can be an expensive operation. In
     // particular the ExternalCCResult fetch may time out after multiple seconds
-    // (see kExternalCCResultTimeoutSeconds and https://crbug.com/750316#c37).
+    // (see kExternalCCResultTimeoutSeconds and
+    // https://crbug.com/40532442#comment38).
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE, on_cookie_update_timeout_.callback(), base::Seconds(12));
 
@@ -128,10 +130,18 @@ void DiceInterceptedSessionStartupHelper::StartupMultilogin(
   reconcilor_lock_ = std::make_unique<AccountReconcilor::Lock>(
       AccountReconcilorFactory::GetForProfile(profile_));
 
+  std::vector<CoreAccountId> accounts_to_send = {account_id_};
+  for (const auto& account_info :
+       identity_manager->GetAccountsWithRefreshTokens()) {
+    if (account_info.account_id != account_id_) {
+      accounts_to_send.push_back(account_info.account_id);
+    }
+  }
+
   // Start the multilogin call.
   signin::MultiloginParameters params = {
       /*mode=*/gaia::MultiloginMode::MULTILOGIN_UPDATE_COOKIE_ACCOUNTS_ORDER,
-      /*accounts_to_send=*/{account_id_}};
+      /*accounts_to_send=*/std::move(accounts_to_send)};
   identity_manager->GetAccountsCookieMutator()->SetAccountsInCookie(
       params, gaia::GaiaSource::kChrome,
       base::BindOnce(
@@ -159,9 +169,22 @@ void DiceInterceptedSessionStartupHelper::MoveTab() {
   accounts_in_cookie_observer_.Reset();
   reconcilor_observer_.Reset();
   on_cookie_update_timeout_.Cancel();
+
+  // Defer the actual tab movement asynchronously to avoid observer reentrancy
+  // issues in AccountReconcilor. This method is called inside the reconcilor's
+  // notification loop (OnStateChanged), and navigating synchronously would
+  // trigger request throttling which attempts to lock/block the reconcilor
+  // synchronously, starting a second nested notification loop.
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&DiceInterceptedSessionStartupHelper::PerformMoveTab,
+                     weak_factory_.GetWeakPtr()));
+}
+
+void DiceInterceptedSessionStartupHelper::PerformMoveTab() {
   reconcilor_lock_.reset();
 
-  GURL url_to_open = GURL(chrome::kChromeUINewTabURL);
+  GURL url_to_open = chrome::ChromeUINewTabURLAsGURL();
   // If the intercepted web contents is still alive, close it now.
   if (web_contents_) {
     url_to_open = web_contents_->GetLastCommittedURL();

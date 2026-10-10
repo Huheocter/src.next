@@ -11,9 +11,9 @@
 #include <string>
 
 #include "extensions/common/extension_id.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
-class Browser;
+class BrowserWindowInterface;
 
 namespace gfx {
 class Image;
@@ -25,13 +25,14 @@ class Size;
 // the platform-abstract ExtensionsContainer class.
 class ExtensionActionTestHelper {
  public:
-  static std::unique_ptr<ExtensionActionTestHelper> Create(Browser* browser);
+  static std::unique_ptr<ExtensionActionTestHelper> Create(
+      BrowserWindowInterface* browser);
 
   ExtensionActionTestHelper(const ExtensionActionTestHelper&) = delete;
   ExtensionActionTestHelper& operator=(const ExtensionActionTestHelper&) =
       delete;
 
-  virtual ~ExtensionActionTestHelper() {}
+  virtual ~ExtensionActionTestHelper() = default;
 
   // Returns the number of browser action buttons in the window toolbar.
   virtual int NumberOfBrowserActions() = 0;
@@ -50,10 +51,11 @@ class ExtensionActionTestHelper {
 
   virtual gfx::NativeView GetPopupNativeView() = 0;
 
-  // Spins a RunLoop until the NativeWindow hosting |GetPopupNativeView()| is
-  // reported as active by the OS. This method is strange: it's not overridden
-  // by subclasses, and instead the implementation is selected at compile-time
-  // depending on the windowing system in use.
+  // Spins a RunLoop until the NativeWindow hosting
+  // |GetPopupNativeView()| is reported as active by the OS. This
+  // method is strange: it's not overridden by subclasses, and instead the
+  // implementation is selected at compile-time depending on the windowing
+  // system in use.
   void WaitForPopup();
 
   // Returns whether a browser action popup is being shown currently.
@@ -77,7 +79,7 @@ class ExtensionActionTestHelper {
       const extensions::ExtensionId& id) = 0;
 
  protected:
-  ExtensionActionTestHelper() {}
+  ExtensionActionTestHelper() = default;
 };
 
 #endif  // CHROME_BROWSER_UI_EXTENSIONS_EXTENSION_ACTION_TEST_HELPER_H_

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "chrome/browser/shutdown_signal_handlers_posix.h"
 
 #include <limits.h>
@@ -16,12 +11,18 @@
 
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/debug/leak_annotations.h"
 #include "base/functional/callback.h"
 #include "base/logging.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/platform_thread.h"
+#include "build/build_config.h"
+
+#if BUILDFLAG(IS_MAC)
+#include "chrome/browser/shutdown_watchdog_mac.h"
+#endif
 
 namespace {
 
@@ -30,7 +31,7 @@ namespace {
 // shared with the parent process.  To prevent child crashes from
 // causing parent shutdowns, |g_pipe_pid| is the pid for the process
 // which registered |g_shutdown_pipe_write_fd|.
-// See <http://crbug.com/175341>.
+// See <http://crbug.com/40301529>.
 pid_t g_pipe_pid = -1;
 int g_shutdown_pipe_write_fd = -1;
 int g_shutdown_pipe_read_fd = -1;
@@ -38,8 +39,7 @@ int g_shutdown_pipe_read_fd = -1;
 // Common code between SIG{HUP, INT, TERM}Handler.
 void GracefulShutdownHandler(int signal) {
   // Reinstall the default handler.  We had one shot at graceful shutdown.
-  struct sigaction action;
-  memset(&action, 0, sizeof(action));
+  struct sigaction action = {};
   action.sa_handler = SIG_DFL;
   RAW_CHECK(sigaction(signal, &action, nullptr) == 0);
 
@@ -49,10 +49,10 @@ void GracefulShutdownHandler(int signal) {
   RAW_CHECK(g_pipe_pid == getpid());
   size_t bytes_written = 0;
   do {
-    int rv = HANDLE_EINTR(
+    int rv = UNSAFE_TODO(HANDLE_EINTR(
         write(g_shutdown_pipe_write_fd,
               reinterpret_cast<const char*>(&signal) + bytes_written,
-              sizeof(signal) - bytes_written));
+              sizeof(signal) - bytes_written)));
     RAW_CHECK(rv >= 0);
     bytes_written += rv;
   } while (bytes_written < sizeof(signal));
@@ -108,11 +108,18 @@ ShutdownDetector::ShutdownDetector(
   CHECK(task_runner_);
 }
 
-ShutdownDetector::~ShutdownDetector() {}
+ShutdownDetector::~ShutdownDetector() = default;
 
-NOINLINE void ExitPosted() {
+NOINLINE void ExitPosted(int signal) {
   // Ensure function isn't optimized away.
   asm("");
+#if BUILDFLAG(IS_MAC)
+  if (signal == SIGTERM) {
+    // Bounds SIGTERM-initiated shutdowns (OS shutdown/reboot/update).
+    // Returns only when inapplicable or once shutdown completed in time.
+    shutdown_watchdog::BlockOnSigtermShutdown();
+  }
+#endif
   sleep(UINT_MAX);
 }
 
@@ -123,9 +130,9 @@ void ShutdownDetector::ThreadMain() {
   size_t bytes_read = 0;
   ssize_t ret;
   do {
-    ret = HANDLE_EINTR(read(shutdown_fd_,
-                            reinterpret_cast<char*>(&signal) + bytes_read,
-                            sizeof(signal) - bytes_read));
+    ret = UNSAFE_TODO(HANDLE_EINTR(
+        read(shutdown_fd_, reinterpret_cast<char*>(&signal) + bytes_read,
+             sizeof(signal) - bytes_read)));
     if (ret < 0) {
       NOTREACHED() << "Unexpected error: " << strerror(errno);
     } else if (ret == 0) {
@@ -141,25 +148,30 @@ void ShutdownDetector::ThreadMain() {
     // options. Raise the signal again. The default handler will pick it up
     // and cause an ungraceful exit.
     RAW_LOG(WARNING, "No valid task runner, exiting ungracefully.");
-    kill(getpid(), signal);
-
-    // The signal may be handled on another thread.  Give that a chance to
-    // happen.
-    sleep(3);
-
-    // We really should be dead by now.  For whatever reason, we're not. Exit
-    // immediately, with the exit status set to the signal number with bit 8
-    // set.  On the systems that we care about, this exit status is what is
-    // normally used to indicate an exit by this signal's default handler.
-    // This mechanism isn't a de jure standard, but even in the worst case, it
-    // should at least result in an immediate exit.
-    RAW_LOG(WARNING, "Still here, exiting really ungracefully.");
-    _exit(signal | (1 << 7));
+    ReraiseSignalAndExit(signal);
   }
-  ExitPosted();
+  ExitPosted(signal);
 }
 
 }  // namespace
+
+void ReraiseSignalAndExit(int signal) {
+  struct sigaction action = {};
+  action.sa_handler = SIG_DFL;
+  sigaction(signal, &action, nullptr);
+
+  sigset_t to_unblock;
+  sigemptyset(&to_unblock);
+  sigaddset(&to_unblock, signal);
+  pthread_sigmask(SIG_UNBLOCK, &to_unblock, nullptr);
+
+  // With SIG_DFL and the signal unblocked, raise() delivers to this thread
+  // before returning; for a fatal-by-default signal this does not return.
+  raise(signal);
+
+  RAW_LOG(WARNING, "Re-raised signal did not terminate; exiting ungracefully.");
+  _exit(signal | (1 << 7));
+}
 
 void InstallShutdownSignalHandlers(
     base::OnceCallback<void(int)> shutdown_callback,
@@ -190,8 +202,7 @@ void InstallShutdownSignalHandlers(
 
   // We need to handle SIGTERM, because that is how many POSIX-based distros
   // ask processes to quit gracefully at shutdown time.
-  struct sigaction action;
-  memset(&action, 0, sizeof(action));
+  struct sigaction action = {};
   action.sa_handler = SIGTERMHandler;
   CHECK_EQ(0, sigaction(SIGTERM, &action, nullptr));
 

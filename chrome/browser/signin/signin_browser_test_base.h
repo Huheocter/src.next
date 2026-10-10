@@ -16,7 +16,7 @@
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/signin/chrome_signin_client_test_util.h"
 #include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
-#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
@@ -36,18 +36,16 @@ template <typename T>
 class SigninBrowserTestBaseT : public T {
  public:
   // `use_main_profile` controls whether the main profile is used (the default
-  // `Profile` created by `InProcessBrowserTest`). On Lacros the main profile
-  // behaves differently, and signout is not allowed.
+  // `Profile` created by `InProcessBrowserTest`).
   explicit SigninBrowserTestBaseT(bool use_main_profile = true)
       : use_main_profile_(use_main_profile) {}
 
   ~SigninBrowserTestBaseT() override = default;
 
   // Sets accounts in the environment to new ones based on the given `emails`.
-  // The primary account is automatically set by Chrome when
-  // `switches::kExplicitBrowserSigninUIOnDesktop` is disabled, and remains
-  // unset when it is enabled. Returns `AccountInfo`s for each added account, in
-  // the same order as `emails`.
+  // The primary account is automatically set by Chrome when explicit signin is
+  // disabled, and remains unset when it is enabled. Returns `AccountInfo`s for
+  // each added account, in the same order as `emails`.
   std::vector<AccountInfo> SetAccountsCookiesAndTokens(
       const std::vector<std::string>& emails) {
     auto account_availability_options =
@@ -64,7 +62,7 @@ class SigninBrowserTestBaseT : public T {
   }
 
   // Returns the profile attached to the `signin::IdentityTestEnvironment`. This
-  // may not be the same as `browser()->profile()`.
+  // may not be the same as `browser()->GetProfile()`.
   Profile* GetProfile() const { return profile_; }
 
   signin::IdentityTestEnvironment* identity_test_env() const {
@@ -87,14 +85,11 @@ class SigninBrowserTestBaseT : public T {
     ProfileManager* profile_manager = g_browser_process->profile_manager();
     base::FilePath profile_path =
         profile_manager->GenerateNextProfileDirectoryPath();
-    profile_ = use_main_profile_ ? this->browser()->profile()
+    profile_ = use_main_profile_ ? this->browser()->GetProfile()
                                  : &profiles::testing::CreateProfileSync(
                                        profile_manager, profile_path);
 
     DCHECK(GetProfile());
-#if (IS_CHROMEOS_LACROS)
-    DCHECK_EQ(GetProfile()->IsMainProfile(), use_main_profile_);
-#endif
 
     if (GetProfile()->IsOffTheRecord()) {
       return;

@@ -7,14 +7,21 @@
 #ifndef CHROME_BROWSER_CHROME_BROWSER_MAIN_LINUX_H_
 #define CHROME_BROWSER_CHROME_BROWSER_MAIN_LINUX_H_
 
+#include <memory>
+
 #include "base/memory/scoped_refptr.h"
 #include "build/build_config.h"
+#include "build/config/linux/dbus/buildflags.h"
 #include "chrome/browser/chrome_browser_main_posix.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
-namespace chromeos::tast_support {
+namespace metrics {
 class StackSamplingRecorder;
 }
+#endif
+
+#if BUILDFLAG(USE_DBUS) && !BUILDFLAG(IS_CHROMEOS)
+class SessionEndListenerLinux;
 #endif
 
 class ChromeBrowserMainPartsLinux : public ChromeBrowserMainPartsPosix {
@@ -34,7 +41,7 @@ class ChromeBrowserMainPartsLinux : public ChromeBrowserMainPartsPosix {
   void PostMainMessageLoopRun() override;
 #endif
   void PreProfileInit() override;
-#if defined(USE_DBUS) && !BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(USE_DBUS) && !BUILDFLAG(IS_CHROMEOS)
   // Only needed for native Linux, to set up the low-memory-monitor-based memory
   // monitoring (which depends on D-Bus).
   void PostBrowserStart() override;
@@ -43,12 +50,12 @@ class ChromeBrowserMainPartsLinux : public ChromeBrowserMainPartsPosix {
 
  private:
 #if BUILDFLAG(IS_CHROMEOS)
-  // Used by ChromeOS tast tests. This is used by both Lacros and Ash, which
-  // is why it's in ChromeBrowserMainPartsLinux, even though it's not used in
-  // Linux. ChromeBrowserMainPartsLinux is the base class of both
-  // ChromeBrowserMainPartsAsh and ChromeBrowserMainPartsLacros.
-  scoped_refptr<chromeos::tast_support::StackSamplingRecorder>
-      stack_sampling_recorder_;
+  // Used by ChromeOS tast tests. This is in ChromeBrowserMainPartsLinux for
+  // historical reasons and should be moved to ChromeBrowserMainPartsAsh.
+  scoped_refptr<metrics::StackSamplingRecorder> stack_sampling_recorder_;
+#endif
+#if BUILDFLAG(USE_DBUS) && !BUILDFLAG(IS_CHROMEOS)
+  std::unique_ptr<SessionEndListenerLinux> session_end_listener_;
 #endif
 };
 

@@ -37,7 +37,9 @@ LayoutTextFragment::LayoutTextFragment(Node* node,
                                        const String& str,
                                        int start_offset,
                                        int length)
-    : LayoutText(node, str ? str.Substring(start_offset, length) : String()),
+    : LayoutText(
+          node,
+          str ? str.DeprecatedSubstring(start_offset, length) : String()),
       start_(start_offset),
       fragment_length_(length),
       is_remaining_text_layout_object_(false),
@@ -58,15 +60,15 @@ LayoutTextFragment* LayoutTextFragment::Create(Node* node,
                                                   length);
 }
 
-LayoutTextFragment* LayoutTextFragment::CreateAnonymous(Document& doc,
+LayoutTextFragment* LayoutTextFragment::CreateAnonymous(Document& document,
                                                         const String& text,
                                                         unsigned start,
                                                         unsigned length) {
   LayoutTextFragment* fragment =
       LayoutTextFragment::Create(nullptr, text, start, length);
-  fragment->SetDocumentForAnonymous(&doc);
+  fragment->SetDocumentForAnonymous(document);
   if (length)
-    doc.View()->IncrementVisuallyNonEmptyCharacterCount(length);
+    document.View()->IncrementVisuallyNonEmptyCharacterCount(length);
   return fragment;
 }
 
@@ -80,12 +82,12 @@ void LayoutTextFragment::Trace(Visitor* visitor) const {
   LayoutText::Trace(visitor);
 }
 
-void LayoutTextFragment::WillBeDestroyed() {
+void LayoutTextFragment::WillBeDestroyed(const ComputedStyle* style) {
   NOT_DESTROYED();
   if (is_remaining_text_layout_object_ && first_letter_pseudo_element_)
     first_letter_pseudo_element_->ClearRemainingTextLayoutObject();
   first_letter_pseudo_element_ = nullptr;
-  LayoutText::WillBeDestroyed();
+  LayoutText::WillBeDestroyed(style);
 }
 
 String LayoutTextFragment::CompleteText() const {
@@ -105,7 +107,7 @@ String LayoutTextFragment::OriginalText() const {
   String result = CompleteText();
   if (!result)
     return String();
-  return result.Substring(Start(), FragmentLength());
+  return result.DeprecatedSubstring(Start(), FragmentLength());
 }
 
 void LayoutTextFragment::TextDidChange() {
@@ -116,7 +118,7 @@ void LayoutTextFragment::TextDidChange() {
   fragment_length_ = TransformedTextLength();
 
   // If we're the remaining text from a first letter then we have to tell the
-  // first letter pseudo element to reattach itself so it can re-calculate the
+  // first letter pseudo-element to reattach itself so it can re-calculate the
   // correct first-letter settings.
   if (IsRemainingTextLayoutObject()) {
     DCHECK(GetFirstLetterPseudoElement());
@@ -171,9 +173,9 @@ Text* LayoutTextFragment::AssociatedTextNode() const {
   NOT_DESTROYED();
   Node* node = GetFirstLetterPseudoElement();
   if (is_remaining_text_layout_object_ || !node) {
-    // If we don't have a node, then we aren't part of a first-letter pseudo
+    // If we don't have a node, then we aren't part of a first-letter pseudo-
     // element, so use the actual node. Likewise, if we have a node, but
-    // we're the remainingTextLayoutObject for a pseudo element use the real
+    // we're the remainingTextLayoutObject for a pseudo-element use the real
     // text node.
     node = GetNode();
   }
@@ -226,8 +228,16 @@ void LayoutTextFragment::UpdateHitTestResult(
   result.SetInnerNode(GetFirstLetterPseudoElement());
 }
 
-DOMNodeId LayoutTextFragment::OwnerNodeId() const {
+DOMNodeId LayoutTextFragment::OwnerNodeId(bool) const {
   NOT_DESTROYED();
+
+  // Anonymous list marker text content belongs to the marker pseudo-element.
+  if (!GetNode() && Parent() && Parent()->IsListMarker()) {
+    if (Node* marker_node = Parent()->GetNode()) {
+      return marker_node->GetDomNodeId();
+    }
+  }
+
   Node* node = AssociatedTextNode();
   return node ? node->GetDomNodeId() : kInvalidDOMNodeId;
 }
@@ -283,7 +293,7 @@ String LayoutTextFragment::PlainText() const {
   const OffsetMapping* first_letter_mapping = first_letter->GetOffsetMapping();
   if (first_letter_mapping && remaining_text_mapping &&
       first_letter_mapping != remaining_text_mapping)
-    return first_letter_mapping->GetText() + LayoutText::PlainText();
+    return StrCat({first_letter_mapping->GetText(), LayoutText::PlainText()});
   return LayoutText::PlainText();
 }
 

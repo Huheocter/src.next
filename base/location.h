@@ -9,7 +9,7 @@
 #include <string>
 
 #include "base/base_export.h"
-#include "base/memory/raw_ptr_exclusion.h"
+#include "base/memory/raw_ptr.h"
 #include "base/trace_event/base_tracing_forward.h"
 #include "build/build_config.h"
 
@@ -46,6 +46,12 @@ class BASE_EXPORT Location {
     return lhs.program_counter_ <=> rhs.program_counter_;
   }
 
+  // The program counter should uniquely identify a location.
+  template <typename H>
+  friend H AbslHashValue(H h, const base::Location& m) {
+    return H::combine(std::move(h), m.program_counter());
+  }
+
   // Returns true if there is source code location info. If this is false,
   // the Location object only contains a program counter or is
   // default-initialized (the program counter is also null).
@@ -79,6 +85,10 @@ class BASE_EXPORT Location {
                           const char* file_name = __builtin_FILE(),
                           int line_number = __builtin_LINE());
 
+  static Location CurrentWithoutFunctionName(
+      const char* file_name = __builtin_FILE(),
+      int line_number = __builtin_LINE());
+
  private:
   // Only initializes the file name and program counter, the source information
   // will be null for the strings, and -1 for the line number.
@@ -97,9 +107,9 @@ class BASE_EXPORT Location {
   const char* file_name_ = nullptr;
   int line_number_ = -1;
 
-  // `program_counter_` is not a raw_ptr<...> for performance reasons (based on
-  // analysis of sampling profiler data and tab_search:top100:2020).
-  RAW_PTR_EXCLUSION const void* program_counter_ = nullptr;
+  // `program_counter_` uses UnprotectedInRelease for performance reasons
+  // (based on analysis of sampling profiler data and tab_search:top100:2020).
+  raw_ptr<const void, UnprotectedInRelease> program_counter_ = nullptr;
 };
 
 BASE_EXPORT const void* GetProgramCounter();

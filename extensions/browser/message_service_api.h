@@ -5,10 +5,13 @@
 #ifndef EXTENSIONS_BROWSER_MESSAGE_SERVICE_API_H_
 #define EXTENSIONS_BROWSER_MESSAGE_SERVICE_API_H_
 
+#include <optional>
+#include <variant>
+
 #include "extensions/browser/service_worker/worker_id.h"
 #include "extensions/common/api/messaging/port_id.h"
+#include "extensions/common/api/messaging/signing_certificate.h"
 #include "extensions/common/mojom/message_port.mojom-forward.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 
 namespace content {
 class BrowserContext;
@@ -24,7 +27,7 @@ class MessageServiceApi {
   virtual ~MessageServiceApi() = default;
 
   using ExternalConnectionInfo = mojom::ExternalConnectionInfo;
-  using Source = absl::variant<content::RenderFrameHost*, WorkerId>;
+  using Source = std::variant<content::RenderFrameHost*, WorkerId>;
 
   virtual void OpenChannelToExtension(
       content::BrowserContext* context,
@@ -41,6 +44,7 @@ class MessageServiceApi {
       Source source,
       const PortId& source_port_id,
       const std::string& native_app_name,
+      const SigningCertificates& android_certificates,
       mojo::PendingAssociatedRemote<extensions::mojom::MessagePort> port,
       mojo::PendingAssociatedReceiver<extensions::mojom::MessagePortHost>
           port_host) = 0;

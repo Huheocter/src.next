@@ -6,14 +6,20 @@
 
 #include <optional>
 #include <string_view>
+#include <utility>
 
 #include "base/command_line.h"
+#include "base/logging.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/scoped_command_line.h"
 #include "base/test/scoped_feature_list.h"
 #include "extensions/common/error_utils.h"
+#include "extensions/common/extension_builder.h"
 #include "extensions/common/extension_features.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/switches.h"
+#include "extensions/common/url_pattern_set.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using extensions::mojom::ManifestLocation;
@@ -29,13 +35,13 @@ std::string GetVersionTooHighWarning(int max_version, int supplied_version) {
 }
 
 testing::AssertionResult RunManifestVersionSuccess(
-    base::Value::Dict manifest,
+    base::DictValue manifest,
     Manifest::Type expected_type,
     int expected_manifest_version,
     std::string_view expected_warning = "",
     Extension::InitFromValueFlags custom_flag = Extension::NO_FLAGS,
     ManifestLocation manifest_location = ManifestLocation::kInternal) {
-  std::string error;
+  std::u16string error;
   scoped_refptr<const Extension> extension = Extension::Create(
       base::FilePath(), manifest_location, manifest, custom_flag, &error);
   if (!extension) {
@@ -45,7 +51,7 @@ testing::AssertionResult RunManifestVersionSuccess(
 
   if (extension->GetType() != expected_type) {
     return testing::AssertionFailure()
-           << "Wrong type: " << extension->GetType();
+           << "Wrong type: " << std::to_underlying(extension->GetType());
   }
 
   if (extension->manifest_version() != expected_manifest_version) {
@@ -71,9 +77,9 @@ testing::AssertionResult RunManifestVersionSuccess(
 }
 
 testing::AssertionResult RunManifestVersionFailure(
-    base::Value::Dict manifest,
+    base::DictValue manifest,
     Extension::InitFromValueFlags custom_flag = Extension::NO_FLAGS) {
-  std::string error;
+  std::u16string error;
   scoped_refptr<const Extension> extension =
       Extension::Create(base::FilePath(), ManifestLocation::kInternal, manifest,
                         custom_flag, &error);
@@ -84,11 +90,11 @@ testing::AssertionResult RunManifestVersionFailure(
 }
 
 testing::AssertionResult RunCreationWithFlags(
-    const base::Value::Dict& manifest,
+    const base::DictValue& manifest,
     mojom::ManifestLocation location,
     Manifest::Type expected_type,
     Extension::InitFromValueFlags custom_flag = Extension::NO_FLAGS) {
-  std::string error;
+  std::u16string error;
   scoped_refptr<const Extension> extension = Extension::Create(
       base::FilePath(), location, manifest, custom_flag, &error);
   if (!extension) {
@@ -98,7 +104,105 @@ testing::AssertionResult RunCreationWithFlags(
 
   if (extension->GetType() != expected_type) {
     return testing::AssertionFailure()
-           << "Wrong type: " << extension->GetType();
+           << "Wrong type: " << std::to_underlying(extension->GetType());
+  }
+  return testing::AssertionSuccess();
+}
+
+// Tests successful parsing of extension manifest "version" attribute and
+// validate that the version is serialized into a correct canonical string. For
+// example, for manifest "version" value "1.01" the canonical serialization
+// would be "1.1". If version string is parsed and re-serialized to the same
+// string, then expected_version can be omitted.
+testing::AssertionResult RunVersionSuccess(
+    std::string_view input_version,
+    std::optional<std::string_view> expected_version = std::nullopt) {
+  base::DictValue manifest = base::DictValue()
+                                 .Set(manifest_keys::kName, "My Extension")
+                                 .Set(manifest_keys::kManifestVersion, 3)
+                                 .Set(manifest_keys::kVersion, input_version);
+
+  std::u16string error;
+  scoped_refptr<const Extension> extension =
+      Extension::Create(base::FilePath(), ManifestLocation::kInternal, manifest,
+                        Extension::NO_FLAGS, &error);
+  if (!extension) {
+    return testing::AssertionFailure()
+           << "Extension creation failed: " << error;
+  }
+
+  if (extension->VersionString().empty()) {
+    return testing::AssertionFailure() << "Extension version can not be empty";
+  }
+
+  if (!expected_version || input_version == *expected_version) {
+    // Parsed version should be the same as input string.
+    if (extension->VersionString() != input_version) {
+      return testing::AssertionFailure()
+             << "Extension version should match the manifest value: expected "
+             << input_version << " but got " << extension->VersionString();
+    }
+    if (!extension->install_warnings().empty()) {
+      return testing::AssertionFailure() << "Received an unexpected warning";
+    }
+  } else {
+    // Version string should be successflly parsed but reformatted,
+    // with an appropriate warning being logged.
+    auto expected_warning =
+        base::StringPrintf(manifest_errors::kVersionFormatting,
+                           extension->VersionString().c_str());
+    if (extension->VersionString() != *expected_version) {
+      return testing::AssertionFailure() << "Extension version does not match "
+                                            "the expected value: expected '"
+                                         << *expected_version << "' but got '"
+                                         << extension->VersionString() << "'";
+    }
+    if (extension->install_warnings().empty()) {
+      return testing::AssertionFailure()
+             << "Extension should have received a warning about re-formatted "
+                "version string";
+    } else if (extension->install_warnings().size() > 1) {
+      return testing::AssertionFailure()
+             << "Extension should have received exactly one warning about "
+                "re-formatted version string";
+    } else if (extension->install_warnings()[0].key !=
+                   manifest_keys::kVersion ||
+               extension->install_warnings()[0].message != expected_warning) {
+      testing::AssertionFailure()
+          << "Expected Warning: Key: '" << manifest_keys::kVersion
+          << "' Message: '" << expected_warning << "', Found Warning: Key: '"
+          << extension->install_warnings()[0].key << "' Message: '"
+          << extension->install_warnings()[0].message << "'";
+    }
+    // warnings
+  }
+  return testing::AssertionSuccess();
+}
+
+// Validate failure to install extensions with invalid `version` manifest
+// attribute. If input is `std::nullopt`, then test validates installation failure
+// for extension with `version` omitted entirely.
+testing::AssertionResult RunVersionFailure(
+    std::optional<std::string_view> version) {
+  base::DictValue manifest = base::DictValue()
+                                 .Set(manifest_keys::kName, "My Extension")
+                                 .Set(manifest_keys::kManifestVersion, 3);
+  if (version) {
+    manifest.Set(manifest_keys::kVersion, *version);
+  }
+
+  std::u16string error;
+  scoped_refptr<const Extension> extension =
+      Extension::Create(base::FilePath(), ManifestLocation::kInternal, manifest,
+                        Extension::NO_FLAGS, &error);
+
+  if (extension) {
+    return testing::AssertionFailure() << "Extension creation succeeded.";
+  }
+  if (error != manifest_errors::kInvalidVersion) {
+    return testing::AssertionFailure()
+           << "Expected Error: '" << manifest_errors::kInvalidVersion
+           << "', Found Error: '" << error << "'";
   }
   return testing::AssertionSuccess();
 }
@@ -110,7 +214,7 @@ testing::AssertionResult RunCreationWithFlags(
 
 TEST(ExtensionTest, ExtensionManifestVersions) {
   auto get_manifest = [](std::optional<int> manifest_version) {
-    auto manifest = base::Value::Dict()
+    auto manifest = base::DictValue()
                         .Set("name", "My Extension")
                         .Set("version", "0.1")
                         .Set("description", "An awesome extension");
@@ -119,7 +223,7 @@ TEST(ExtensionTest, ExtensionManifestVersions) {
     return manifest;
   };
 
-  const Manifest::Type kType = Manifest::TYPE_EXTENSION;
+  const Manifest::Type kType = Manifest::Type::kExtension;
   EXPECT_TRUE(RunManifestVersionSuccess(get_manifest(2), kType, 2));
   EXPECT_TRUE(RunManifestVersionSuccess(get_manifest(3), kType, 3));
   EXPECT_TRUE(RunManifestVersionSuccess(get_manifest(4), kType, 4,
@@ -153,20 +257,20 @@ TEST(ExtensionTest, ExtensionManifestVersions) {
 
 TEST(ExtensionTest, PlatformAppManifestVersions) {
   auto get_manifest = [](std::optional<int> manifest_version) {
-    base::Value::Dict background;
-    background.Set("scripts", base::Value::List().Append("background.js"));
-    auto manifest = base::Value::Dict()
+    base::DictValue background;
+    background.Set("scripts", base::ListValue().Append("background.js"));
+    auto manifest = base::DictValue()
                         .Set("name", "My Platform App")
                         .Set("version", "0.1")
                         .Set("description", "A platform app")
-                        .Set("app", base::Value::Dict().Set(
+                        .Set("app", base::DictValue().Set(
                                         "background", std::move(background)));
     if (manifest_version)
       manifest.Set("manifest_version", *manifest_version);
     return manifest;
   };
 
-  const Manifest::Type kType = Manifest::TYPE_PLATFORM_APP;
+  const Manifest::Type kType = Manifest::Type::kPlatformApp;
   EXPECT_TRUE(RunManifestVersionSuccess(get_manifest(2), kType, 2));
   EXPECT_TRUE(RunManifestVersionSuccess(get_manifest(3), kType, 3));
   EXPECT_TRUE(RunManifestVersionSuccess(get_manifest(4), kType, 4,
@@ -194,9 +298,9 @@ TEST(ExtensionTest, PlatformAppManifestVersions) {
 
 TEST(ExtensionTest, HostedAppManifestVersions) {
   auto get_manifest = [](std::optional<int> manifest_version) {
-    base::Value::Dict app;
-    app.Set("urls", base::Value::List().Append("http://example.com"));
-    auto manifest = base::Value::Dict()
+    base::DictValue app;
+    app.Set("urls", base::ListValue().Append("http://example.com"));
+    auto manifest = base::DictValue()
                         .Set("name", "My Hosted App")
                         .Set("version", "0.1")
                         .Set("description", "A hosted app")
@@ -206,7 +310,7 @@ TEST(ExtensionTest, HostedAppManifestVersions) {
     return manifest;
   };
 
-  const Manifest::Type kType = Manifest::TYPE_HOSTED_APP;
+  const Manifest::Type kType = Manifest::Type::kHostedApp;
   EXPECT_TRUE(RunManifestVersionSuccess(get_manifest(2), kType, 2));
   EXPECT_TRUE(RunManifestVersionSuccess(get_manifest(3), kType, 3));
   EXPECT_TRUE(RunManifestVersionSuccess(get_manifest(4), kType, 4,
@@ -224,7 +328,7 @@ TEST(ExtensionTest, HostedAppManifestVersions) {
 
 TEST(ExtensionTest, UserScriptManifestVersions) {
   auto get_manifest = [](std::optional<int> manifest_version) {
-    auto manifest = base::Value::Dict()
+    auto manifest = base::DictValue()
                         .Set("name", "My Extension")
                         .Set("version", "0.1")
                         .Set("description", "An awesome extension")
@@ -234,7 +338,7 @@ TEST(ExtensionTest, UserScriptManifestVersions) {
     return manifest;
   };
 
-  const Manifest::Type kType = Manifest::TYPE_USER_SCRIPT;
+  const Manifest::Type kType = Manifest::Type::kUserScript;
   EXPECT_TRUE(RunManifestVersionSuccess(get_manifest(2), kType, 2));
   EXPECT_TRUE(RunManifestVersionSuccess(get_manifest(3), kType, 3));
   EXPECT_TRUE(RunManifestVersionSuccess(get_manifest(4), kType, 4,
@@ -251,18 +355,84 @@ TEST(ExtensionTest, UserScriptManifestVersions) {
 }
 
 TEST(ExtensionTest, LoginScreenFlag) {
-  auto manifest = base::Value::Dict()
+  auto manifest = base::DictValue()
                       .Set("name", "My Extension")
                       .Set("version", "0.1")
                       .Set("description", "An awesome extension")
                       .Set("manifest_version", 2);
 
   EXPECT_TRUE(RunCreationWithFlags(manifest, ManifestLocation::kExternalPolicy,
-                                   Manifest::TYPE_EXTENSION,
+                                   Manifest::Type::kExtension,
                                    Extension::NO_FLAGS));
   EXPECT_TRUE(RunCreationWithFlags(manifest, ManifestLocation::kExternalPolicy,
-                                   Manifest::TYPE_LOGIN_SCREEN_EXTENSION,
+                                   Manifest::Type::kLoginScreenExtension,
                                    Extension::FOR_LOGIN_SCREEN));
+}
+
+TEST(ExtensionTest, ExtensionVersionFormat) {
+  // Extension "version" is accepted without transformations.
+  EXPECT_TRUE(RunVersionSuccess("1"));
+  EXPECT_TRUE(RunVersionSuccess("1.0"));
+  EXPECT_TRUE(RunVersionSuccess("0.1"));
+  EXPECT_TRUE(RunVersionSuccess("0.0.0"));
+
+  // Extension "version" is parseable, but has a non-canonical form,
+  // e.g., leading zeros.
+  EXPECT_TRUE(RunVersionSuccess("0.0.01", "0.0.1"));
+  EXPECT_TRUE(RunVersionSuccess("1.002.3", "1.2.3"));
+
+  // Extension "version" can not be parsed and causes installation failure.
+  EXPECT_TRUE(RunVersionFailure(std::nullopt));
+  EXPECT_TRUE(RunVersionFailure("01"));
+  EXPECT_TRUE(RunVersionFailure("00.1"));
+  EXPECT_TRUE(RunVersionFailure("-1.0"));
+  EXPECT_TRUE(RunVersionFailure("1.-1"));
+  EXPECT_TRUE(RunVersionFailure("-0.0"));
+}
+
+// Verifies that short_name is sanitized by collapsing whitespace and
+// terminating bidirectional control characters.
+// Regression test for crbug.com/514071697.
+TEST(ExtensionTest, ExtensionShortNameSanitization) {
+  base::DictValue manifest =
+      base::DictValue()
+          .Set(manifest_keys::kName, "My Extension")
+          .Set(manifest_keys::kShortName, "Sec\n\nUpdate\u202E")
+          .Set(manifest_keys::kVersion, "0.1")
+          .Set(manifest_keys::kManifestVersion, 3);
+
+  std::u16string error;
+  scoped_refptr<const Extension> extension =
+      Extension::Create(base::FilePath(), ManifestLocation::kInternal, manifest,
+                        Extension::NO_FLAGS, &error);
+  ASSERT_TRUE(extension) << "Extension creation failed: " << error;
+
+  EXPECT_EQ(std::string("SecUpdate") + "\xE2\x80\xAE" + "\xE2\x80\xAC",
+            extension->short_name());
+}
+
+TEST(ExtensionTest, ResourceMatchesCaseSensitivity) {
+  scoped_refptr<const Extension> extension = ExtensionBuilder("test").Build();
+  ASSERT_TRUE(extension);
+
+  URLPatternSet pattern_set;
+  URLPattern pattern(URLPattern::SCHEME_EXTENSION);
+  ASSERT_EQ(URLPattern::ParseResult::kSuccess,
+            pattern.Parse(extension->url().spec() + "path.html"));
+  pattern_set.AddPattern(pattern);
+
+  // Exact match succeeds for both case_sensitive = true and false.
+  EXPECT_TRUE(extension->ResourceMatches(pattern_set, "path.html",
+                                         /*case_sensitive=*/true));
+  EXPECT_TRUE(extension->ResourceMatches(pattern_set, "path.html",
+                                         /*case_sensitive=*/false));
+
+  // Case mismatch fails when case_sensitive = true, and succeeds when
+  // case_sensitive = false.
+  EXPECT_FALSE(extension->ResourceMatches(pattern_set, "Path.html",
+                                          /*case_sensitive=*/true));
+  EXPECT_TRUE(extension->ResourceMatches(pattern_set, "Path.html",
+                                         /*case_sensitive=*/false));
 }
 
 }  // namespace extensions

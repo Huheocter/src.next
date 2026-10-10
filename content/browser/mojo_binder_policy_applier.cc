@@ -6,7 +6,6 @@
 
 #include <string_view>
 
-#include "base/containers/contains.h"
 #include "base/containers/fixed_flat_set.h"
 #include "content/public/browser/mojo_binder_policy_map.h"
 #include "mojo/public/cpp/bindings/message.h"
@@ -46,16 +45,6 @@ MojoBinderPolicyApplier::CreateForSameOriginPrerendering(
       std::move(cancel_callback));
 }
 
-// static
-std::unique_ptr<MojoBinderPolicyApplier>
-MojoBinderPolicyApplier::CreateForPreview(
-    base::OnceCallback<void(const std::string& interface_name)>
-        cancel_callback) {
-  return std::make_unique<MojoBinderPolicyApplier>(
-      MojoBinderPolicyMapImpl::GetInstanceForPreview(),
-      std::move(cancel_callback));
-}
-
 void MojoBinderPolicyApplier::ApplyPolicyToNonAssociatedBinder(
     const std::string& interface_name,
     base::OnceClosure binder_callback) {
@@ -84,7 +73,7 @@ void MojoBinderPolicyApplier::ApplyPolicyToNonAssociatedBinder(
         std::move(binder_callback).Run();
         break;
       case MojoBinderNonAssociatedPolicy::kDefer:
-        if (base::Contains(kSyncMethodInterfaces, interface_name)) {
+        if (kSyncMethodInterfaces.contains(interface_name)) {
           std::move(binder_callback).Run();
         } else {
           deferred_binders_.push_back(std::move(binder_callback));
@@ -94,7 +83,7 @@ void MojoBinderPolicyApplier::ApplyPolicyToNonAssociatedBinder(
     return;
   }
 
-  DCHECK_EQ(mode_, Mode::kEnforce);
+  CHECK_EQ(mode_, Mode::kEnforce, base::NotFatalUntil::M159);
   switch (policy) {
     case MojoBinderNonAssociatedPolicy::kGrant:
       std::move(binder_callback).Run();
@@ -105,7 +94,7 @@ void MojoBinderPolicyApplier::ApplyPolicyToNonAssociatedBinder(
       }
       break;
     case MojoBinderNonAssociatedPolicy::kDefer:
-      if (base::Contains(kSyncMethodInterfaces, interface_name)) {
+      if (kSyncMethodInterfaces.contains(interface_name)) {
         deferred_sync_binders_.push_back(std::move(binder_callback));
       } else {
         deferred_binders_.push_back(std::move(binder_callback));
@@ -132,8 +121,9 @@ bool MojoBinderPolicyApplier::ApplyPolicyToAssociatedBinder(
       policy = policy_map_->GetAssociatedMojoBinderPolicy(
           interface_name, MojoBinderAssociatedPolicy::kCancel);
       if (policy != MojoBinderAssociatedPolicy::kGrant) {
-        if (cancel_callback_)
+        if (cancel_callback_) {
           std::move(cancel_callback_).Run(interface_name);
+        }
         return false;
       }
   }
@@ -141,7 +131,7 @@ bool MojoBinderPolicyApplier::ApplyPolicyToAssociatedBinder(
 }
 
 void MojoBinderPolicyApplier::PrepareToGrantAll() {
-  DCHECK_EQ(mode_, Mode::kEnforce);
+  CHECK_EQ(mode_, Mode::kEnforce, base::NotFatalUntil::M159);
 
   // The remote side would think its status has changed after the browser
   // executes this method, so it is safe to send some synchronous method, so the
@@ -155,7 +145,7 @@ void MojoBinderPolicyApplier::PrepareToGrantAll() {
 }
 
 void MojoBinderPolicyApplier::GrantAll() {
-  DCHECK_NE(mode_, Mode::kGrantAll);
+  CHECK_NE(mode_, Mode::kGrantAll, base::NotFatalUntil::M159);
 
   // Check that we are in a Mojo message dispatch, since the deferred binders
   // might call mojo::ReportBadMessage().
@@ -169,14 +159,15 @@ void MojoBinderPolicyApplier::GrantAll() {
   // there are still subtle problems with running all these callbacks at once:
   // for example, mojo::GetMessageCallback()/mojo::ReportBadMessage() can only
   // be called once per message dispatch.
-  DCHECK(mojo::IsInMessageDispatch());
+  CHECK(mojo::IsInMessageDispatch(), base::NotFatalUntil::M159);
 
   mode_ = Mode::kGrantAll;
 
   // It's safe to iterate over `deferred_binders_` because no more callbacks
   // will be added to it once `grant_all_` is true."
-  for (auto& deferred_binder : deferred_binders_)
+  for (auto& deferred_binder : deferred_binders_) {
     std::move(deferred_binder).Run();
+  }
   deferred_binders_.clear();
 }
 

@@ -4,39 +4,54 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
+import static org.chromium.build.NullUtil.assertNonNull;
+
+import android.content.Context;
 import android.os.Bundle;
+import android.view.View;
 
 import androidx.annotation.VisibleForTesting;
 import androidx.preference.Preference;
 
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.base.shared_preferences.SharedPreferencesManager;
-import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.base.supplier.MonotonicObservableSupplier;
+import org.chromium.base.supplier.ObservableSuppliers;
+import org.chromium.base.supplier.SettableMonotonicObservableSupplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.auxiliary_search.AuxiliarySearchConfigManager;
+import org.chromium.chrome.browser.auxiliary_search.AuxiliarySearchControllerFactory;
+import org.chromium.chrome.browser.auxiliary_search.AuxiliarySearchDonationServiceUtils;
+import org.chromium.chrome.browser.auxiliary_search.AuxiliarySearchUtils;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.magic_stack.HomeModulesMetricsUtils;
+import org.chromium.chrome.browser.magic_stack.ModuleDelegate.ModuleType;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.preferences.Pref;
+import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.segmentation_platform.client_util.HomeModulesRankingHelper;
 import org.chromium.chrome.browser.settings.ChromeBaseSettingsFragment;
+import org.chromium.chrome.browser.settings.search.ChromeBaseSearchIndexProvider;
 import org.chromium.chrome.browser.tab.TabArchiveSettings;
 import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncFeatures;
 import org.chromium.components.browser_ui.settings.ChromeSwitchPreference;
 import org.chromium.components.browser_ui.settings.SettingsUtils;
 import org.chromium.components.browser_ui.settings.TextMessagePreference;
+import org.chromium.components.browser_ui.settings.search.SettingsIndexData;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.user_prefs.UserPrefs;
+import org.chromium.ui.text.ChromeClickableSpan;
+import org.chromium.ui.text.SpanApplier;
 
 /** Fragment for tab related configurations to Chrome. */
+@NullMarked
 public class TabsSettings extends ChromeBaseSettingsFragment {
     // Must match key in tabs_settings.xml
     @VisibleForTesting
     static final String PREF_AUTO_OPEN_SYNCED_TAB_GROUPS_SWITCH =
             "auto_open_synced_tab_groups_switch";
-
-    @VisibleForTesting
-    static final String PREF_SHOW_TAB_GROUP_CREATION_DIALOG_SWITCH =
-            "show_tab_group_creation_dialog_switch";
 
     @VisibleForTesting
     static final String PREF_TAB_ARCHIVE_SETTINGS = "archive_settings_entrypoint";
@@ -49,20 +64,32 @@ public class TabsSettings extends ChromeBaseSettingsFragment {
     static final String PREF_SHARE_TITLES_AND_URLS_WITH_OS_LEARN_MORE =
             "share_titles_and_urls_with_os_learn_more";
 
-    private final ObservableSupplierImpl<String> mPageTitle = new ObservableSupplierImpl<>();
+    @VisibleForTesting
+    static final String PREF_CHROME_SUGGESTIONS_IN_OTHER_APPS_SWITCH =
+            "chrome_suggestions_in_other_apps_switch";
+
+    @VisibleForTesting
+    static final String PREF_CCT_ALWAYS_OPEN_IN_BROWSER = "cct_always_open_in_browser";
+
+    @VisibleForTesting
+    static final String LEARN_MORE_URL = "https://support.google.com/chrome/?p=share_titles_urls";
+
+    private final SettableMonotonicObservableSupplier<String> mPageTitle =
+            ObservableSuppliers.createMonotonic();
 
     @Override
-    public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
+    public void onCreatePreferences(@Nullable Bundle savedInstanceState, @Nullable String rootKey) {
         SettingsUtils.addPreferencesFromResource(this, R.xml.tabs_settings);
         mPageTitle.set(getString(R.string.tabs_settings_title));
 
         configureAutoOpenSyncedTabGroupsSwitch();
-        configureShowCreationDialogSwitch();
         configureShareTitlesAndUrlsWithOsSwitch();
+        configureChromeSuggestionsInOtherAppsSwitch();
+        configureCctAlwaysOpenInBrowserSwitch();
     }
 
     @Override
-    public ObservableSupplier<String> getPageTitle() {
+    public MonotonicObservableSupplier<String> getPageTitle() {
         return mPageTitle;
     }
 
@@ -74,15 +101,13 @@ public class TabsSettings extends ChromeBaseSettingsFragment {
 
     private void configureAutoOpenSyncedTabGroupsSwitch() {
         ChromeSwitchPreference autoOpenSyncedTabGroupsSwitch =
-                (ChromeSwitchPreference) findPreference(PREF_AUTO_OPEN_SYNCED_TAB_GROUPS_SWITCH);
-        boolean isTabGroupSyncAutoOpenConfigurable =
-                TabGroupSyncFeatures.isTabGroupSyncEnabled(getProfile())
-                        && ChromeFeatureList.isEnabled(
-                                ChromeFeatureList.TAB_GROUP_SYNC_AUTO_OPEN_KILL_SWITCH);
-        if (!isTabGroupSyncAutoOpenConfigurable) {
+                assertNonNull(findPreference(PREF_AUTO_OPEN_SYNCED_TAB_GROUPS_SWITCH));
+        // LINT.IfChange(isTabGroupSyncAutoOpenConfigurable)
+        if (!isTabGroupSyncAutoOpenConfigurable(getProfile())) {
             autoOpenSyncedTabGroupsSwitch.setVisible(false);
             return;
         }
+        // LINT.ThenChange(:isTabGroupSyncAutoOpenConfigurableIndex)
 
         PrefService prefService = UserPrefs.get(getProfile());
         boolean isEnabled = prefService.getBoolean(Pref.AUTO_OPEN_SYNCED_TAB_GROUPS);
@@ -97,38 +122,17 @@ public class TabsSettings extends ChromeBaseSettingsFragment {
                 });
     }
 
-    private void configureShowCreationDialogSwitch() {
-        ChromeSwitchPreference showTabGroupCreationDialogSwitch =
-                (ChromeSwitchPreference) findPreference(PREF_SHOW_TAB_GROUP_CREATION_DIALOG_SWITCH);
-        if (!TabUiFeatureUtilities.isTabGroupCreationDialogShowConfigurable()) {
-            showTabGroupCreationDialogSwitch.setVisible(false);
-            return;
-        }
-
-        SharedPreferencesManager prefsManager = ChromeSharedPreferences.getInstance();
-        boolean isEnabled =
-                prefsManager.readBoolean(ChromePreferenceKeys.SHOW_TAB_GROUP_CREATION_DIALOG, true);
-        showTabGroupCreationDialogSwitch.setChecked(isEnabled);
-        showTabGroupCreationDialogSwitch.setOnPreferenceChangeListener(
-                (preference, newValue) -> {
-                    boolean enabled = (boolean) newValue;
-                    prefsManager.writeBoolean(
-                            ChromePreferenceKeys.SHOW_TAB_GROUP_CREATION_DIALOG, enabled);
-                    RecordHistogram.recordBooleanHistogram(
-                            "TabGroups.ShowTabGroupCreationDialogSwitch.ToggledToState", enabled);
-                    return true;
-                });
-    }
-
     private void configureTabArchiveSettings() {
         Preference tabArchiveSettingsPref = findPreference(PREF_TAB_ARCHIVE_SETTINGS);
-        if (!ChromeFeatureList.isEnabled(ChromeFeatureList.ANDROID_TAB_DECLUTTER)) {
+
+        if (TabArchiveSettings.isArchiveForceDisabled()) {
             tabArchiveSettingsPref.setVisible(false);
             return;
         }
 
         TabArchiveSettings archiveSettings =
                 new TabArchiveSettings(ChromeSharedPreferences.getInstance());
+
         if (archiveSettings.getArchiveEnabled()) {
             int tabArchiveTimeDeltaDays = archiveSettings.getArchiveTimeDeltaDays();
             tabArchiveSettingsPref.setSummary(
@@ -151,7 +155,147 @@ public class TabsSettings extends ChromeBaseSettingsFragment {
                 (TextMessagePreference)
                         findPreference(PREF_SHARE_TITLES_AND_URLS_WITH_OS_LEARN_MORE);
 
-        shareTitlesAndUrlsWithOsSwitch.setVisible(false);
-        learnMoreTextMessagePreference.setVisible(false);
+        // LINT.IfChange(isShareTitlesAndUrlsEnabled)
+        if (!isShareTitlesAndUrlsEnabled()) {
+            shareTitlesAndUrlsWithOsSwitch.setVisible(false);
+            learnMoreTextMessagePreference.setVisible(false);
+            return;
+        }
+        // LINT.ThenChange(:isShareTitlesAndUrlsEnabledIndex)
+
+        boolean isEnabled = AuxiliarySearchUtils.isShareTabsWithOsEnabled();
+        shareTitlesAndUrlsWithOsSwitch.setChecked(isEnabled);
+        shareTitlesAndUrlsWithOsSwitch.setOnPreferenceChangeListener(
+                (preference, newValue) -> {
+                    boolean enabled = (boolean) newValue;
+                    AuxiliarySearchConfigManager.getInstance().notifyShareTabsStateChanged(enabled);
+                    HomeModulesRankingHelper.notifyCardInteracted(
+                            getProfile(),
+                            HomeModulesMetricsUtils.getModuleName(ModuleType.AUXILIARY_SEARCH));
+                    return true;
+                });
+
+        String learnMoreText =
+                getResources()
+                        .getString(R.string.share_titles_and_urls_with_os_learn_more_setting_text);
+        learnMoreTextMessagePreference.setSummary(
+                SpanApplier.applySpans(
+                        learnMoreText,
+                        new SpanApplier.SpanInfo(
+                                "<link>",
+                                "</link>",
+                                new ChromeClickableSpan(getContext(), this::onLearnMoreClicked))));
     }
+
+    private void configureChromeSuggestionsInOtherAppsSwitch() {
+        ChromeSwitchPreference chromeSuggestionsSwitch =
+                (ChromeSwitchPreference)
+                        findPreference(PREF_CHROME_SUGGESTIONS_IN_OTHER_APPS_SWITCH);
+
+        // LINT.IfChange(isChromeSuggestionsInOtherAppsEnabled)
+        if (!isChromeSuggestionsInOtherAppsEnabled()) {
+            chromeSuggestionsSwitch.setVisible(false);
+            return;
+        }
+        // LINT.ThenChange(:isChromeSuggestionsInOtherAppsEnabledIndex)
+
+        PrefService prefService = UserPrefs.get(getProfile());
+        boolean isEnabled =
+                prefService.getBoolean(Pref.AUXILIARY_SEARCH_BROWSING_DATA_DONATION_ENABLED);
+        chromeSuggestionsSwitch.setChecked(isEnabled);
+        chromeSuggestionsSwitch.setOnPreferenceChangeListener(
+                (preference, newValue) -> {
+                    boolean enabled = (boolean) newValue;
+                    prefService.setBoolean(
+                            Pref.AUXILIARY_SEARCH_BROWSING_DATA_DONATION_ENABLED, enabled);
+                    HomeModulesRankingHelper.notifyCardInteracted(
+                            getProfile(),
+                            HomeModulesMetricsUtils.getModuleName(ModuleType.AUXILIARY_SEARCH));
+                    return true;
+                });
+    }
+
+    @VisibleForTesting
+    void onLearnMoreClicked(View view) {
+        getCustomTabLauncher().openUrlInCct(getContext(), LEARN_MORE_URL);
+    }
+
+    private void configureCctAlwaysOpenInBrowserSwitch() {
+        ChromeSwitchPreference cctAlwaysOpenInBrowserSwitch =
+                (ChromeSwitchPreference) findPreference(PREF_CCT_ALWAYS_OPEN_IN_BROWSER);
+        if (cctAlwaysOpenInBrowserSwitch == null) return;
+        if (!ChromeFeatureList.sCctAlwaysOpenInBrowser.isEnabled()) {
+            cctAlwaysOpenInBrowserSwitch.setVisible(false);
+            return;
+        }
+
+        boolean isEnabled =
+                ChromeSharedPreferences.getInstance()
+                        .readBoolean(
+                                ChromePreferenceKeys.CUSTOM_TABS_ALWAYS_OPEN_IN_BROWSER, false);
+        cctAlwaysOpenInBrowserSwitch.setChecked(isEnabled);
+        cctAlwaysOpenInBrowserSwitch.setOnPreferenceChangeListener(
+                (preference, newValue) -> {
+                    boolean enabled = (boolean) newValue;
+                    ChromeSharedPreferences.getInstance()
+                            .writeBoolean(
+                                    ChromePreferenceKeys.CUSTOM_TABS_ALWAYS_OPEN_IN_BROWSER,
+                                    enabled);
+                    return true;
+                });
+    }
+
+    @Override
+    public @AnimationType int getAnimationType() {
+        return AnimationType.PROPERTY;
+    }
+
+    @Override
+    public @Nullable String getMainMenuKey() {
+        return "tabs";
+    }
+
+    private static boolean isTabGroupSyncAutoOpenConfigurable(Profile profile) {
+        return TabGroupSyncFeatures.isTabGroupSyncEnabled(profile);
+    }
+
+    private static boolean isShareTitlesAndUrlsEnabled() {
+        return AuxiliarySearchControllerFactory.getInstance().isEnabledAndDeviceCompatible();
+    }
+
+    private static boolean isChromeSuggestionsInOtherAppsEnabled() {
+        return AuxiliarySearchDonationServiceUtils.isBrowsingDataDonationEnabled();
+    }
+
+    public static final ChromeBaseSearchIndexProvider SEARCH_INDEX_DATA_PROVIDER =
+            new ChromeBaseSearchIndexProvider(TabsSettings.class.getName(), R.xml.tabs_settings) {
+
+                @Override
+                public void updateDynamicPreferences(
+                        Context context, SettingsIndexData indexData, Profile profile) {
+                    // LINT.IfChange(isTabGroupSyncAutoOpenConfigurableIndex)
+                    if (!isTabGroupSyncAutoOpenConfigurable(profile)) {
+                        indexData.removeEntry(getUniqueId(PREF_AUTO_OPEN_SYNCED_TAB_GROUPS_SWITCH));
+                    }
+                    // LINT.ThenChange(:isTabGroupSyncAutoOpenConfigurable)
+
+                    // LINT.IfChange(isShareTitlesAndUrlsEnabledIndex)
+                    if (!isShareTitlesAndUrlsEnabled()) {
+                        indexData.removeEntry(
+                                getUniqueId(PREF_SHARE_TITLES_AND_URLS_WITH_OS_SWITCH));
+                    }
+
+                    // It's not useful for "Learn more" text pref to be searchable.
+                    indexData.removeEntry(
+                            getUniqueId(PREF_SHARE_TITLES_AND_URLS_WITH_OS_LEARN_MORE));
+                    // LINT.ThenChange(:isShareTitlesAndUrlsEnabled)
+
+                    // LINT.IfChange(isChromeSuggestionsInOtherAppsEnabledIndex)
+                    if (!isChromeSuggestionsInOtherAppsEnabled()) {
+                        String pref = PREF_CHROME_SUGGESTIONS_IN_OTHER_APPS_SWITCH;
+                        indexData.removeEntry(getUniqueId(pref));
+                    }
+                    // LINT.ThenChange(:isChromeSuggestionsInOtherAppsEnabled)
+                }
+            };
 }

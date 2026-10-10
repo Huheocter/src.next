@@ -11,6 +11,7 @@
 #include "base/observer_list.h"
 #include "chrome/browser/command_observer.h"
 #include "chrome/browser/command_updater_delegate.h"
+#include "ui/base/window_open_disposition.h"
 
 struct CommandUpdaterImpl::Command {
   // Empty optional means not specified yet and thus implicitly disabled.
@@ -22,8 +23,7 @@ CommandUpdaterImpl::CommandUpdaterImpl(CommandUpdaterDelegate* delegate)
     : delegate_(delegate) {
 }
 
-CommandUpdaterImpl::~CommandUpdaterImpl() {
-}
+CommandUpdaterImpl::~CommandUpdaterImpl() = default;
 
 bool CommandUpdaterImpl::SupportsCommand(int id) const {
   return commands_.find(id) != commands_.end();
@@ -37,17 +37,13 @@ bool CommandUpdaterImpl::IsCommandEnabled(int id) const {
   return *command->second->enabled;
 }
 
-bool CommandUpdaterImpl::ExecuteCommand(int id, base::TimeTicks time_stamp) {
-  return ExecuteCommandWithDisposition(id, WindowOpenDisposition::CURRENT_TAB,
-                                       time_stamp);
-}
-
-bool CommandUpdaterImpl::ExecuteCommandWithDisposition(
+bool CommandUpdaterImpl::ExecuteCommandWithDispositionAndContext(
     int id,
     WindowOpenDisposition disposition,
+    std::optional<actions::ActionInvocationContext> context,
     base::TimeTicks time_stamp) {
   if (SupportsCommand(id) && IsCommandEnabled(id)) {
-    delegate_->ExecuteCommandWithDisposition(id, disposition);
+    delegate_->HandleCommandWithDisposition(id, disposition, time_stamp);
     return true;
   }
   return false;
@@ -85,7 +81,7 @@ void CommandUpdaterImpl::DisableAllCommands() {
     UpdateCommandEnabled(command_pair.first, false);
 }
 
-std::vector<int> CommandUpdaterImpl::GetAllIds() {
+std::vector<int> CommandUpdaterImpl::GetAllIds() const {
   std::vector<int> result;
   for (const auto& command_pair : commands_)
     result.push_back(command_pair.first);

@@ -9,6 +9,9 @@
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/run_loop.h"
+#include "base/test/run_until.h"
+#include "base/test/scoped_feature_list.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/download/download_permission_request.h"
@@ -16,6 +19,9 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/content_settings/core/common/content_settings.h"
+#include "components/content_settings/core/common/content_settings_types.h"
+#include "components/permissions/features.h"
 #include "components/permissions/permission_request_manager.h"
 #include "components/permissions/test/mock_permission_prompt_factory.h"
 #include "content/public/browser/navigation_controller.h"
@@ -28,6 +34,7 @@
 #include "third_party/blink/public/common/input/web_keyboard_event.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "third_party/blink/public/common/input/web_touch_event.h"
+#include "ui/base/page_transition_types.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/flags/android/chrome_feature_list.h"
@@ -90,7 +97,7 @@ class DownloadRequestLimiterTest : public ChromeRenderViewHostTestHarness {
   void OnUserInteractionFor(WebContents* web_contents,
                             blink::WebInputEvent::Type type) {
     DownloadRequestLimiter::TabDownloadState* state =
-        download_request_limiter_->GetDownloadState(web_contents, false);
+        download_request_limiter_->GetDownloadState(web_contents);
     if (!state)
       return;
     std::unique_ptr<blink::WebInputEvent> event;
@@ -129,8 +136,13 @@ class DownloadRequestLimiterTest : public ChromeRenderViewHostTestHarness {
   void UpdateContentSettings(WebContents* web_contents,
                              ContentSetting setting) {
     // Ensure a download state exists.
-    download_request_limiter_->GetDownloadState(web_contents, true);
+    download_request_limiter_->GetOrCreateDownloadState(web_contents);
     SetHostContentSetting(web_contents, setting);
+  }
+
+  DownloadRequestLimiter::TabDownloadState* GetTabDownloadState(
+      WebContents* web_contents) {
+    return download_request_limiter_->GetDownloadState(web_contents);
   }
 
  protected:
@@ -719,7 +731,7 @@ TEST_F(DownloadRequestLimiterTest, DownloadRequestLimiter_ResetOnUserGesture) {
 }
 
 TEST_F(DownloadRequestLimiterTest, ResetOnReload) {
-  // This is a regression test for https://crbug.com/110707.
+  // This is a regression test for https://crbug.com/40140715.
   NavigateAndCommit(kTestURL);
   LoadCompleted();
   EXPECT_EQ(DownloadRequestLimiter::ALLOW_ONE_DOWNLOAD,
@@ -1020,6 +1032,58 @@ TEST_F(DownloadRequestLimiterTest, RendererInitiatedDownloadFromAnotherOrigin) {
             download_request_limiter_->GetDownloadUiStatus(web_contents()));
 }
 
+// Test that accepting the multiple-download prompt only allows the queued
+// downloads that were initiated by the origin the prompt was shown for.
+TEST_F(DownloadRequestLimiterTest, AcceptOnlyAllowsPromptOriginDownloads) {
+  NavigateAndCommit(kTestURL);
+  LoadCompleted();
+
+  url::Origin main_origin = url::Origin::Create(kTestURL);
+  url::Origin other_origin = url::Origin::Create(GURL("http://foobar.com"));
+
+  // First download from the main origin is allowed and moves the tab to
+  // PROMPT_BEFORE_DOWNLOAD.
+  CanDownloadFor(kTestURL, web_contents(), main_origin);
+  ExpectAndResetCounts(1, 0, 0, __LINE__);
+  EXPECT_EQ(DownloadRequestLimiter::PROMPT_BEFORE_DOWNLOAD,
+            download_request_limiter_->GetDownloadStatus(web_contents()));
+
+  // A download from another origin in the same tab triggers the prompt for that
+  // origin. Leave the prompt visible so subsequent downloads queue behind it.
+  UpdateExpectations(WAIT);
+  CanDownloadFor(kTestURL, web_contents(), other_origin);
+  EXPECT_TRUE(mock_permission_prompt_factory_->RequestOriginSeen(
+      other_origin.GetURL()));
+  EXPECT_FALSE(
+      mock_permission_prompt_factory_->RequestOriginSeen(main_origin.GetURL()));
+  ExpectAndResetCounts(0, 0, 1, __LINE__);
+
+  // While the prompt is showing, queue several more downloads from the main
+  // origin. These must not be released by accepting the other origin's prompt.
+  for (int i = 0; i < 5; ++i) {
+    CanDownloadFor(kTestURL, web_contents(), main_origin);
+  }
+  ExpectAndResetCounts(0, 0, 0, __LINE__);
+
+  // Accept the prompt as the permission request would for `other_origin`.
+  DownloadRequestLimiter::TabDownloadState* state =
+      GetTabDownloadState(web_contents());
+  ASSERT_TRUE(state);
+  state->Accept(other_origin);
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return state->GetDownloadStatus(other_origin) ==
+           DownloadRequestLimiter::ALLOW_ALL_DOWNLOADS;
+  }));
+
+  // Only the download queued for `other_origin` should proceed; downloads
+  // queued for the main origin should be cancelled.
+  ExpectAndResetCounts(1, 5, 0, __LINE__);
+  EXPECT_EQ(DownloadRequestLimiter::ALLOW_ALL_DOWNLOADS,
+            state->GetDownloadStatus(other_origin));
+  EXPECT_EQ(DownloadRequestLimiter::PROMPT_BEFORE_DOWNLOAD,
+            state->GetDownloadStatus(main_origin));
+}
+
 // Test that user interaction on the current page won't reset download status
 // for another origin.
 TEST_F(DownloadRequestLimiterTest,
@@ -1097,7 +1161,7 @@ TEST_F(DownloadRequestLimiterTest, OpaqueOrigins) {
   ExpectAndResetCounts(0, 1, 0, __LINE__);
   EXPECT_EQ(DownloadRequestLimiter::DOWNLOADS_NOT_ALLOWED,
             download_request_limiter_->GetDownloadStatus(web_contents()));
-  EXPECT_EQ(DownloadRequestLimiter::DOWNLOAD_UI_BLOCKED,
+  EXPECT_EQ(DownloadRequestLimiter::DOWNLOAD_UI_DEFAULT,
             download_request_limiter_->GetDownloadUiStatus(web_contents()));
 
   // Trigger another download from about:blank, that should prompt user
@@ -1155,7 +1219,7 @@ TEST_F(DownloadRequestLimiterTest,
   ExpectAndResetCounts(0, 1, 0, __LINE__);
   EXPECT_EQ(DownloadRequestLimiter::DOWNLOADS_NOT_ALLOWED,
             download_request_limiter_->GetDownloadStatus(web_contents()));
-  EXPECT_EQ(DownloadRequestLimiter::DOWNLOAD_UI_BLOCKED,
+  EXPECT_EQ(DownloadRequestLimiter::DOWNLOAD_UI_DEFAULT,
             download_request_limiter_->GetDownloadUiStatus(web_contents()));
 
   CanDownload(kTestURL);
@@ -1164,4 +1228,111 @@ TEST_F(DownloadRequestLimiterTest,
             download_request_limiter_->GetDownloadStatus(web_contents()));
   EXPECT_EQ(DownloadRequestLimiter::DOWNLOAD_UI_ALLOWED,
             download_request_limiter_->GetDownloadUiStatus(web_contents()));
+}
+
+// Verify AUTOMATIC_DOWNLOADS permission granted through Permission Prompt
+// is correctly marked as eligible (i.e. `last_visited` timestamp is tracked)
+// for Safety Hub auto-revocation when the
+// kSafetyHubUnusedPermissionRevocationForAllSurfaces flag is enabled.
+TEST_F(DownloadRequestLimiterTest, SetContentSetting_LastVisited_Tracked) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      permissions::features::
+          kSafetyHubUnusedPermissionRevocationForAllSurfaces);
+
+  NavigateAndCommit(kTestURL);
+  LoadCompleted();
+
+  // Simulate the first download that is always allowed (expect_continues = 1).
+  CanDownload(kTestURL);
+  ExpectAndResetCounts(1, 0, 0, __LINE__);
+
+  // Simulate the second download attempt that should prompt the user to choose
+  // whether to allow or not consequent downloads (expect_asks = 1).
+  // User chooses to ALLOW (expect_continues = 1).
+  UpdateExpectations(ACCEPT);
+  CanDownload(kTestURL);
+  ExpectAndResetCounts(1, 0, 1, __LINE__);
+
+  // Verify that `last_visited` was recorded and lies within the past 7 days.
+  //
+  // The `last_visited` is coarsed by `GetCoarseVisitedTime` [1] due to privacy.
+  // It rounds given timestamp down to the nearest multiple of 7 in the past.
+  // [1] components/content_settings/core/browser/content_settings_utils.cc
+  base::Time now = base::Time::Now();
+  content_settings::SettingInfo info;
+  HostContentSettingsMap* hcsm = HostContentSettingsMapFactory::GetForProfile(
+      Profile::FromBrowserContext(web_contents()->GetBrowserContext()));
+  hcsm->GetWebsiteSetting(kTestURL, kTestURL,
+                          ContentSettingsType::AUTOMATIC_DOWNLOADS, &info);
+  EXPECT_GE(info.metadata.last_visited(), now - base::Days(7));
+  EXPECT_LE(info.metadata.last_visited(), now);
+}
+
+// Verify AUTOMATIC_DOWNLOADS permission blocked through Permission Prompt
+// is not marked as eligible (i.e. `last_visited` timestamp is tracked)
+// for Safety Hub auto-revocation even when the
+// kSafetyHubUnusedPermissionRevocationForAllSurfaces flag is enabled.
+TEST_F(DownloadRequestLimiterTest,
+       SetContentSetting_LastVisited_NotTracked_WrongValue) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      permissions::features::
+          kSafetyHubUnusedPermissionRevocationForAllSurfaces);
+
+  NavigateAndCommit(kTestURL);
+  LoadCompleted();
+
+  // Simulate the first download that is always allowed (expect_continues = 1).
+  CanDownload(kTestURL);
+  ExpectAndResetCounts(1, 0, 0, __LINE__);
+
+  // Simulate the second download attempt that should prompt the user to choose
+  // whether to allow or not consequent downloads (expect_asks = 1).
+  // User chooses to BLOCK (expect_cancels = 1).
+  UpdateExpectations(CANCEL);
+  CanDownload(kTestURL);
+  ExpectAndResetCounts(0, 1, 1, __LINE__);
+
+  // Verify that `last_visited` is not recorded unless the value is ALLOW.
+  content_settings::SettingInfo info;
+  HostContentSettingsMap* hcsm = HostContentSettingsMapFactory::GetForProfile(
+      Profile::FromBrowserContext(web_contents()->GetBrowserContext()));
+  hcsm->GetWebsiteSetting(kTestURL, kTestURL,
+                          ContentSettingsType::AUTOMATIC_DOWNLOADS, &info);
+  EXPECT_EQ(base::Time(), info.metadata.last_visited());
+}
+
+// Verify AUTOMATIC_DOWNLOADS permission granted through Permission Prompt
+// is not marked as eligible (i.e. `last_visited` timestamp is tracked)
+// for Safety Hub auto-revocation because the
+// kSafetyHubUnusedPermissionRevocationForAllSurfaces flag is disabled.
+TEST_F(DownloadRequestLimiterTest,
+       SetContentSetting_LastVisited_NotTracked_FeatureOff) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndDisableFeature(
+      permissions::features::
+          kSafetyHubUnusedPermissionRevocationForAllSurfaces);
+
+  NavigateAndCommit(kTestURL);
+  LoadCompleted();
+
+  // Simulate the first download that is always allowed (expect_continues = 1).
+  CanDownload(kTestURL);
+  ExpectAndResetCounts(1, 0, 0, __LINE__);
+
+  // Simulate the second download attempt that should prompt the user to choose
+  // whether to allow or not consequent downloads (expect_asks = 1).
+  // User chooses to ALLOW (expect_continues = 1).
+  UpdateExpectations(ACCEPT);
+  CanDownload(kTestURL);
+  ExpectAndResetCounts(1, 0, 1, __LINE__);
+
+  // Verify that `last_visited` is not recorded when the feature is off.
+  content_settings::SettingInfo info;
+  HostContentSettingsMap* hcsm = HostContentSettingsMapFactory::GetForProfile(
+      Profile::FromBrowserContext(web_contents()->GetBrowserContext()));
+  hcsm->GetWebsiteSetting(kTestURL, kTestURL,
+                          ContentSettingsType::AUTOMATIC_DOWNLOADS, &info);
+  EXPECT_EQ(base::Time(), info.metadata.last_visited());
 }

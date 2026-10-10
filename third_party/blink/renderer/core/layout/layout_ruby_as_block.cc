@@ -23,11 +23,11 @@ void LayoutRubyAsBlock::AddChild(LayoutObject* child,
   LayoutObject* inline_ruby = FirstChild();
   if (!inline_ruby) {
     inline_ruby = MakeGarbageCollected<LayoutInline>(nullptr);
-    inline_ruby->SetDocumentForAnonymous(&GetDocument());
+    inline_ruby->SetDocumentForAnonymous(GetDocument());
     ComputedStyleBuilder new_style_builder =
         GetDocument().GetStyleResolver().CreateAnonymousStyleBuilderWithDisplay(
             StyleRef(), EDisplay::kRuby);
-    inline_ruby->SetStyle(new_style_builder.TakeStyle());
+    inline_ruby->SetStyle(*new_style_builder.TakeStyle());
     LayoutBlockFlow::AddChild(inline_ruby);
   } else if (before_child == inline_ruby) {
     inline_ruby->AddChild(child, inline_ruby->SlowFirstChild());
@@ -36,10 +36,14 @@ void LayoutRubyAsBlock::AddChild(LayoutObject* child,
   inline_ruby->AddChild(child, before_child);
 }
 
-void LayoutRubyAsBlock::StyleDidChange(StyleDifference diff,
-                                       const ComputedStyle* old_style) {
+void LayoutRubyAsBlock::StyleDidChange(
+    StyleDifference diff,
+    const ComputedStyle* old_style,
+    const ComputedStyle& new_style,
+    const StyleChangeContext& style_change_context) {
   NOT_DESTROYED();
-  LayoutBlockFlow::StyleDidChange(diff, old_style);
+  LayoutBlockFlow::StyleDidChange(diff, old_style, new_style,
+                                  style_change_context);
   PropagateStyleToAnonymousChildren();
 
   // Because LayoutInline::AnonymousHasStylePropagationOverride() returns
@@ -48,15 +52,10 @@ void LayoutRubyAsBlock::StyleDidChange(StyleDifference diff,
   if (auto* inline_ruby = FirstChild()) {
     ComputedStyleBuilder new_style_builder =
         GetDocument().GetStyleResolver().CreateAnonymousStyleBuilderWithDisplay(
-            StyleRef(), inline_ruby->StyleRef().Display());
+            new_style, inline_ruby->StyleRef().Display());
     UpdateAnonymousChildStyle(inline_ruby, new_style_builder);
-    inline_ruby->SetStyle(new_style_builder.TakeStyle());
+    inline_ruby->SetStyle(*new_style_builder.TakeStyle());
   }
-}
-
-void LayoutRubyAsBlock::RemoveLeftoverAnonymousBlock(LayoutBlock*) {
-  NOT_DESTROYED();
-  NOTREACHED();
 }
 
 }  // namespace blink

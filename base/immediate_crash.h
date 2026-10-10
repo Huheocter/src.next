@@ -5,6 +5,7 @@
 #ifndef BASE_IMMEDIATE_CRASH_H_
 #define BASE_IMMEDIATE_CRASH_H_
 
+#include "base/compiler_specific.h"
 #include "base/fuzzing_buildflags.h"
 #include "build/build_config.h"
 
@@ -58,13 +59,7 @@ extern "C" int __attribute__((weak)) __llvm_profile_write_file(void);
 
 #if defined(COMPILER_GCC)
 
-#if BUILDFLAG(IS_NACL)
-
-// Crash report accuracy is not guaranteed on NaCl.
-#define TRAP_SEQUENCE1_() __builtin_trap()
-#define TRAP_SEQUENCE2_() asm volatile("")
-
-#elif defined(ARCH_CPU_X86_FAMILY)
+#if defined(ARCH_CPU_X86_FAMILY)
 
 // TODO(crbug.com/40625592): In theory, it should be possible to use just
 // int3. However, there are a number of crashes with SIGILL as the exception
@@ -157,6 +152,9 @@ extern "C" int __attribute__((weak)) __llvm_profile_write_file(void);
 
 namespace base {
 
+// Don't add extra traps for `-fsanitize=unreachable`: this disrupts the
+// behavior-checking test in `immediate_crash_unittest.cc`.
+NO_SANITIZE("unreachable")
 [[noreturn]] IMMEDIATE_CRASH_ALWAYS_INLINE void ImmediateCrash() {
 #if BUILDFLAG(USE_FUZZING_ENGINE) && BUILDFLAG(IS_LINUX)
   // A fuzzer run will often handle many successful cases then

@@ -46,8 +46,8 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_PAINT_LAYER_CLIPPER_H_
 
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/layout/geometry/physical_offset.h"
 #include "third_party/blink/renderer/core/layout/geometry/physical_rect.h"
+#include "third_party/blink/renderer/platform/geometry/physical_offset.h"
 #include "third_party/blink/renderer/platform/graphics/overlay_scrollbar_clip_behavior.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
@@ -71,12 +71,10 @@ class ClipRectsContext {
       OverlayScrollbarClipBehavior overlay_scrollbar_clip_behavior =
           kIgnoreOverlayScrollbarSize,
       ShouldRespectOverflowClipType root_layer_clip_behavior =
-          kRespectOverflowClip,
-      const PhysicalOffset& sub_pixel_accumulation = PhysicalOffset())
+          kRespectOverflowClip)
       : root_layer(root),
         root_fragment(fragment),
         overlay_scrollbar_clip_behavior(overlay_scrollbar_clip_behavior),
-        sub_pixel_accumulation(sub_pixel_accumulation),
         respect_overflow_clip(root_layer_clip_behavior) {}
 
   bool ShouldRespectRootLayerClip() const;
@@ -88,7 +86,6 @@ class ClipRectsContext {
  private:
   friend class PaintLayerClipper;
 
-  PhysicalOffset sub_pixel_accumulation;
   ShouldRespectOverflowClipType respect_overflow_clip;
 };
 

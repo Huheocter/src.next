@@ -16,9 +16,12 @@
 #include "content/public/browser/context_menu_params.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_util.h"
+#include "extensions/buildflags/buildflags.h"
 #include "ui/base/models/image_model.h"
 #include "ui/gfx/favicon_size.h"
 #include "ui/gfx/image/image.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -26,6 +29,10 @@ namespace {
 
 // The range of command IDs reserved for extension's custom menus.
 // TODO(oshima): These values will be injected by embedders.
+constexpr int kMaxExtensionCustomCommands = 1000;
+constexpr int IDC_EXTENSIONS_CONTEXT_CUSTOM_LAST =
+    IDC_EXTENSIONS_CONTEXT_CUSTOM_FIRST + kMaxExtensionCustomCommands;
+
 int extensions_context_custom_first = IDC_EXTENSIONS_CONTEXT_CUSTOM_FIRST;
 int extensions_context_custom_last = IDC_EXTENSIONS_CONTEXT_CUSTOM_LAST;
 

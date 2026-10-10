@@ -100,18 +100,34 @@ TEST_F(WindowFeaturesTest, Opener) {
   }
 }
 
-TEST_F(WindowFeaturesTest, PartitionedPopin) {
-  for (const bool& partitioned_popins_enabled : {false, true}) {
-    ScopedPartitionedPopinsForTest scoped_feature{partitioned_popins_enabled};
-    WebWindowFeatures window_features =
-        GetWindowFeaturesFromString("popin",
-                                    /*dom_window=*/nullptr);
-    EXPECT_EQ(partitioned_popins_enabled, window_features.is_partitioned_popin);
-    EXPECT_EQ(true, window_features.is_popup);
-    window_features = GetWindowFeaturesFromString("popin,popup=0",
-                                                  /*dom_window=*/nullptr);
-    EXPECT_EQ(partitioned_popins_enabled, window_features.is_partitioned_popin);
-    EXPECT_EQ(partitioned_popins_enabled, window_features.is_popup);
+TEST_F(WindowFeaturesTest, AlwaysOnTop) {
+  ScopedWindowOpenAlwaysOnTopForTest always_on_top_enabled{true};
+
+  static const struct {
+    const char* feature_string;
+    bool always_on_top;
+  } kCases[] = {
+      {"", false},
+      {"something", false},
+      {"notalwaysontop", false},
+      {"alwaysontop", true},
+      {"something, alwaysontop", true},
+      {"alwaysontop, something", true},
+      {"AlWaYsOnToP", true},
+      {"alwaysontop=1", true},
+      {"alwaysontop=true", true},
+      {"alwaysontop=yes", true},
+      {"alwaysontop=0", false},
+      {"alwaysontop=false", false},
+      {"alwaysontop=no", false},
+  };
+
+  for (const auto& test : kCases) {
+    EXPECT_EQ(test.always_on_top,
+              GetWindowFeaturesFromString(test.feature_string,
+                                          /*dom_window=*/nullptr)
+                  .always_on_top)
+        << "Testing '" << test.feature_string << "'";
   }
 }
 

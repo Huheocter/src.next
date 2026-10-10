@@ -119,8 +119,13 @@
                desc="Title of the new incognito tab page, not to be confused with the action of opening a new incognito tab.">
         New Incognito Tab
       </message>
+      <message name="IDS_NEW_ISOLATED_TAB_TITLE"
+               desc="Title of the new isolated tab page, not to be confused with the action of opening a new isolated tab.">
+        New Isolated Tab
+      </message>
       <message name="IDS_INCOGNITO_TAB_LEARN_MORE_ACCESSIBILITY_LABEL"
-          desc="Accessibility label for a link labeled 'Learn more' that links to a help article about Incognito mode.">
+          desc="Accessibility label for a link labeled 'Learn more' that links to a help article about Incognito mode."
+          formatter_data="android_java">
         Learn more about Incognito
       </message>
       <if expr="not is_android">
@@ -188,53 +193,49 @@
           <ph name="LIST_ITEM">&lt;li&gt;</ph>Your internet service provider
         <ph name="END_LIST">&lt;/ul&gt;</ph>
       </message>
-      <message name="IDS_NEW_TAB_OTR_COOKIE_CONTROLS_CONTROLLED_TOOLTIP_TEXT"
-               desc="Text displayed in the settings tooltip when third-party cookie blocking is managed or turned on by the user."
-               formatter_data="android_java">
-        This setting is controlled in Cookies settings.
-      </message>
-      <message name="IDS_NEW_TAB_OTR_THIRD_PARTY_COOKIE" desc="Label for the Block 3rd-party cookie checkbox on the Cookies category." formatter_data="android_java">
-        Block third-party cookies
-      </message>
-      <message name="IDS_NEW_TAB_OTR_THIRD_PARTY_COOKIE_SUBLABEL" desc="A sub-label below the Block 3rd-party cookie checkbox." formatter_data="android_java">
-        When on, sites can't use cookies that track you across the web. Features on some sites may break.
-      </message>
-
-      <!-- 3P Cookie Depreciation  -->
-      <message name="IDS_NEW_TAB_OTR_THIRD_PARTY_BLOCKED_COOKIE" desc="Text informing users that 3rd-party cookies are blocked." formatter_data="android_java">
-        Third-party cookies are blocked
-      </message>
       <message name="IDS_NEW_TAB_OPENS_HC_ARTICLE_IN_NEW_TAB" desc="ARIA (accessibility) label describing a link which opens a help center article in a new tab.">
         Opens a Help Center article in a new tab
       </message>
-      <if expr="not is_android">
-        <if expr="_google_chrome">
-          <message name="IDS_NEW_TAB_OTR_THIRD_PARTY_BLOCKED_COOKIE_SUBLABEL" desc="Sub-text explaining 3rd-party cookie blocking with a help center link to re-enabling 3rd-party cookies for specific sites." formatter_data="android_java">
-            Chrome blocks sites from using third-party cookies to track you as you browse.
-            <ph name="NEW_LINE">&lt;br/&gt;</ph>If site features aren’t working <ph name="START_LINK">&lt;a target="_blank" href="$1" aria-description="$2"&gt;</ph>try temporarily allowing third-party cookies<ph name="END_LINK">&lt;/a&gt;</ph>.
-          </message>
-        </if>
-        <if expr="not _google_chrome">
-          <message name="IDS_NEW_TAB_OTR_THIRD_PARTY_BLOCKED_COOKIE_SUBLABEL" desc="Sub-text explaining 3rd-party cookie blocking with a help center link to re-enabling 3rd-party cookies for specific sites." formatter_data="android_java">
-            Chromium blocks sites from using third-party cookies to track you as you browse.
-            <ph name="NEW_LINE">&lt;br/&gt;</ph>If site features aren’t working <ph name="START_LINK">&lt;a target="_blank" href="$1" aria-description="$2"&gt;</ph>try temporarily allowing third-party cookies<ph name="END_LINK">&lt;/a&gt;</ph>.
-          </message>
-        </if>
-      </if>
-      <if expr="is_android">
-        <if expr="_google_chrome">
-          <message name="IDS_NEW_TAB_OTR_THIRD_PARTY_BLOCKED_COOKIE_PART_ONE" desc="Sub-text explaining 3rd-party cookie blocking with a help center link to re-enabling 3rd-party cookies for specific sites. Part 1/2." formatter_data="android_java">
-            Chrome blocks sites from using third-party cookies to track you as you browse.
-          </message>
-        </if>
-        <if expr="not _google_chrome">
-          <message name="IDS_NEW_TAB_OTR_THIRD_PARTY_BLOCKED_COOKIE_PART_ONE" desc="Sub-text explaining 3rd-party cookie blocking with a help center link to re-enabling 3rd-party cookies for specific sites. Part 1/2." formatter_data="android_java">
-            Chromium blocks sites from using third-party cookies to track you as you browse.
-          </message>
-        </if>
-        <message name="IDS_NEW_TAB_OTR_THIRD_PARTY_BLOCKED_COOKIE_PART_TWO" desc="Sub-text explaining 3rd-party cookie blocking with a help center link to re-enabling 3rd-party cookies for specific sites. Part 2/2." formatter_data="android_java">
-          If site features aren’t working <ph name="BEGIN_LINK">&lt;link&gt;</ph>try temporarily allowing third-party cookies<ph name="END_LINK">&lt;/link&gt;</ph>.
-        </message>
-      </if>
+
+      <!-- Isolated mode NTP strings -->
+      <message name="IDS_NEW_ISOLATED_TAB_HEADING" desc="Heading displayed on the new tab page in Isolated mode.">
+        You’re now in Isolated mode
+      </message>
+      <message name="IDS_NEW_ISOLATED_TAB_DESCRIPTION" desc="Text introducing the learn more link in Isolated mode.">
+        Learn more about
+      </message>
+      <message name="IDS_NEW_ISOLATED_TAB_LEARN_MORE_LINK" desc="Link text to learn more about browsing in Isolated mode.">
+        browsing in Isolated mode
+      </message>
+      <message name="IDS_NEW_ISOLATED_TAB_LEARN_MORE_ACCESSIBILITY_LABEL" desc="Accessibility label for the learn more link in Isolated mode.">
+        Learn more about browsing in Isolated mode.
+      </message>
+      <message name="IDS_NEW_ISOLATED_TAB_VISIBILITY_WARNING" desc="Warning text displayed on the Isolated mode NTP explaining who can see browsing activity.">
+        Your activity might be visible to: websites you visit, your employer or school, your internet service provider
+      </message>
+      <message name="IDS_NEW_ISOLATED_TAB_ACTIVITY_MONITORING_TITLE" desc="Title for the activity monitoring card in Isolated mode.">
+        Activity monitoring
+      </message>
+      <message name="IDS_NEW_ISOLATED_TAB_ACTIVITY_MONITORING_CONTENT" desc="Description for the activity monitoring card in Isolated mode.">
+        Certain browsing activity may be monitored by your organization to prevent data loss; go to <ph name="BEGIN_LINK">&lt;a href="chrome://management"&gt;</ph>chrome://management<ph name="END_LINK">&lt;/a&gt;</ph> for more details
+      </message>
+      <message name="IDS_NEW_ISOLATED_TAB_BROWSING_DATA_TITLE" desc="Title for the browsing data card in Isolated mode.">
+        Browsing data
+      </message>
+      <message name="IDS_NEW_ISOLATED_TAB_BROWSING_DATA_CONTENT" desc="Description for the browsing data card in Isolated mode.">
+        Your browsing history, cookies and site data, cache, and information entered in forms will be deleted once you close all Isolated windows
+      </message>
+      <message name="IDS_NEW_ISOLATED_TAB_EXTENSIONS_TITLE" desc="Title for the extensions card in Isolated mode.">
+        Extensions
+      </message>
+      <message name="IDS_NEW_ISOLATED_TAB_EXTENSIONS_CONTENT" desc="Description for the extensions card in Isolated mode.">
+        Extensions required by your organization will remain turned on; go to <ph name="BEGIN_LINK">&lt;a href="chrome://extensions"&gt;</ph>chrome://extensions<ph name="END_LINK">&lt;/a&gt;</ph> for more details
+      </message>
+      <message name="IDS_NEW_ISOLATED_TAB_THIRD_PARTY_COOKIES_TITLE" desc="Title for the third-party cookies card in Isolated mode.">
+        Third-party cookies
+      </message>
+      <message name="IDS_NEW_ISOLATED_TAB_THIRD_PARTY_COOKIES_CONTENT" desc="Description for the third-party cookies card in Isolated mode.">
+        Sites are blocked from using third-party cookies. If a site relying on these cookies isn't working, you can <ph name="BEGIN_LINK">&lt;a target="_blank" href="$1" aria-description="$2"&gt;</ph>try giving that site temporary access to third-party cookies<ph name="END_LINK">&lt;/a&gt;</ph>.
+      </message>
 
 </grit-part>

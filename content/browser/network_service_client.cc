@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/command_line.h"
-#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/sequence_checker.h"
 #include "base/sequence_token.h"
@@ -41,6 +40,10 @@
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/content_uri_utils.h"
+#endif
+
+#if BUILDFLAG(IS_WIN)
+#include "content/browser/network/network_service_process_tracker_win.h"
 #endif
 
 #if BUILDFLAG(IS_MAC)
@@ -122,9 +125,6 @@ NetworkServiceClient::NetworkServiceClient()
 
   if (IsOutOfProcessNetworkService()) {
     net::CertDatabase::GetInstance()->AddObserver(this);
-    memory_pressure_listener_ = std::make_unique<base::MemoryPressureListener>(
-        FROM_HERE, base::BindRepeating(&NetworkServiceClient::OnMemoryPressure,
-                                       base::Unretained(this)));
   }
 
   webrtc_connections_observer_ =
@@ -137,16 +137,9 @@ NetworkServiceClient::~NetworkServiceClient() {
   if (IsOutOfProcessNetworkService()) {
     net::CertDatabase::GetInstance()->RemoveObserver(this);
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX)
-    bool remove_ncn_observers = true;
-#if BUILDFLAG(IS_LINUX)
-    remove_ncn_observers = base::FeatureList::IsEnabled(
-        net::features::kAddressTrackerLinuxIsProxied);
-#endif  // BUILDFLAG(IS_LINUX)
-    if (remove_ncn_observers) {
-      net::NetworkChangeNotifier::RemoveConnectionTypeObserver(this);
-      net::NetworkChangeNotifier::RemoveMaxBandwidthObserver(this);
-      net::NetworkChangeNotifier::RemoveIPAddressObserver(this);
-    }
+    net::NetworkChangeNotifier::RemoveConnectionTypeObserver(this);
+    net::NetworkChangeNotifier::RemoveMaxBandwidthObserver(this);
+    net::NetworkChangeNotifier::RemoveIPAddressObserver(this);
 #endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX)
   }
 }
@@ -157,11 +150,6 @@ void NetworkServiceClient::OnTrustStoreChanged() {
 
 void NetworkServiceClient::OnClientCertStoreChanged() {
   GetNetworkService()->OnClientCertStoreChanged();
-}
-
-void NetworkServiceClient::OnMemoryPressure(
-    base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level) {
-  GetNetworkService()->OnMemoryPressure(memory_pressure_level);
 }
 
 void NetworkServiceClient::OnPeerToPeerConnectionsCountChange(uint32_t count) {
@@ -179,8 +167,9 @@ void NetworkServiceClient::OnApplicationStateChange(
 void NetworkServiceClient::OnConnectionTypeChanged(
     net::NetworkChangeNotifier::ConnectionType type) {
   network_change_manager_->OnNetworkChanged(
-      false /* dns_changed */, false /* ip_address_changed */,
-      true /* connection_type_changed */, network::mojom::ConnectionType(type),
+      false /* dns_changed */,
+      network::mojom::IPAddressChangeType::IP_ADDRESS_CHANGE_NONE,
+      true /* connection_type_changed */, type,
       false /* connection_subtype_changed */,
       network::mojom::ConnectionSubtype(
           net::NetworkChangeNotifier::GetConnectionSubtype()));
@@ -192,19 +181,20 @@ void NetworkServiceClient::OnMaxBandwidthChanged(
   // The connection subtype change will trigger a max bandwidth change in the
   // network service notifier.
   network_change_manager_->OnNetworkChanged(
-      false /* dns_changed */, false /* ip_address_changed */,
-      false /* connection_type_changed */, network::mojom::ConnectionType(type),
+      false /* dns_changed */,
+      network::mojom::IPAddressChangeType::IP_ADDRESS_CHANGE_NONE,
+      false /* connection_type_changed */, type,
       true /* connection_subtype_changed */,
       network::mojom::ConnectionSubtype(
           net::NetworkChangeNotifier::GetConnectionSubtype()));
 }
 
-void NetworkServiceClient::OnIPAddressChanged() {
+void NetworkServiceClient::OnIPAddressChanged(
+    net::NetworkChangeNotifier::IPAddressChangeType change_type) {
   network_change_manager_->OnNetworkChanged(
-      false /* dns_changed */, true /* ip_address_changed */,
+      false /* dns_changed */, network::mojom::IPAddressChangeType(change_type),
       false /* connection_type_changed */,
-      network::mojom::ConnectionType(
-          net::NetworkChangeNotifier::GetConnectionType()),
+      net::NetworkChangeNotifier::GetConnectionType(),
       false /* connection_subtype_changed */,
       network::mojom::ConnectionSubtype(
           net::NetworkChangeNotifier::GetConnectionSubtype()));
@@ -214,6 +204,7 @@ void NetworkServiceClient::OnIPAddressChanged() {
 #if BUILDFLAG(IS_WIN)
 mojo::PendingRemote<network::mojom::SocketBroker>
 NetworkServiceClient::BindSocketBroker() {
+  EnsureNetworkServiceListenerStarted();
   return socket_broker_.BindNewRemote();
 }
 #endif  // BUILDFLAG(IS_WIN)
@@ -229,12 +220,7 @@ NetworkServiceClient::BindURLLoaderNetworkServiceObserver() {
 void NetworkServiceClient::OnNetworkServiceInitialized(
     network::mojom::NetworkService* service) {
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX)
-  bool add_ncn_observers = true;
-#if BUILDFLAG(IS_LINUX)
-  add_ncn_observers = base::FeatureList::IsEnabled(
-      net::features::kAddressTrackerLinuxIsProxied);
-#endif  // BUILDFLAG(IS_LINUX)
-  if (IsOutOfProcessNetworkService() && add_ncn_observers) {
+  if (IsOutOfProcessNetworkService()) {
     DCHECK(!net::NetworkChangeNotifier::CreateIfNeeded());
     service->GetNetworkChangeManager(
         network_change_manager_.BindNewPipeAndPassReceiver());
@@ -298,13 +284,16 @@ void NetworkServiceClient::OnAuthRequired(
   auth_challenge_responder_remote->OnAuthCredentials(std::nullopt);
 }
 
-void NetworkServiceClient::OnPrivateNetworkAccessPermissionRequired(
-    const GURL& url,
-    const net::IPAddress& ip_address,
-    const std::optional<std::string>& private_network_device_id,
-    const std::optional<std::string>& private_network_device_name,
-    OnPrivateNetworkAccessPermissionRequiredCallback callback) {
-  std::move(callback).Run(false);
+void NetworkServiceClient::OnLocalNetworkAccessPermissionRequired(
+    network::mojom::TransportType type,
+    network::mojom::IPAddressSpace ip_address_space,
+    OnLocalNetworkAccessPermissionRequiredCallback callback) {
+  std::move(callback).Run(network::mojom::LocalNetworkAccessResult::kDenied);
+}
+
+void NetworkServiceClient::OnPlatformLocalNetworkPermissionRequired(
+    OnPlatformLocalNetworkPermissionRequiredCallback callback) {
+  std::move(callback).Run(/*granted=*/false);
 }
 
 void NetworkServiceClient::OnClearSiteData(
@@ -325,18 +314,11 @@ void NetworkServiceClient::OnLoadingStateUpdate(
 
 void NetworkServiceClient::OnDataUseUpdate(
     int32_t network_traffic_annotation_id_hash,
-    int64_t recv_bytes,
-    int64_t sent_bytes) {
+    base::ByteSize recv_bytes,
+    base::ByteSize sent_bytes) {
   GetContentClient()->browser()->OnNetworkServiceDataUseUpdate(
       GlobalRenderFrameHostId(), network_traffic_annotation_id_hash, recv_bytes,
       sent_bytes);
-}
-
-void NetworkServiceClient::OnSharedStorageHeaderReceived(
-    const url::Origin& request_origin,
-    std::vector<network::mojom::SharedStorageOperationPtr> operations,
-    OnSharedStorageHeaderReceivedCallback callback) {
-  std::move(callback).Run();
 }
 
 void NetworkServiceClient::Clone(
@@ -345,7 +327,14 @@ void NetworkServiceClient::Clone(
   url_loader_network_service_observers_.Add(this, std::move(observer));
 }
 
-void NetworkServiceClient::OnWebSocketConnectedToPrivateNetwork(
+void NetworkServiceClient::OnWebSocketConnectedToLocalNetwork(
+    const GURL& request_url,
     network::mojom::IPAddressSpace ip_address_space) {}
+
+void NetworkServiceClient::OnUrlLoaderConnectedToLocalNetwork(
+    const GURL& request_url,
+    network::mojom::IPAddressSpace response_address_space,
+    network::mojom::IPAddressSpace client_address_space,
+    network::mojom::IPAddressSpace target_address_space) {}
 
 }  // namespace content

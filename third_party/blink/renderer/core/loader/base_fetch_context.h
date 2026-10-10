@@ -53,6 +53,7 @@ class CORE_EXPORT BaseFetchContext : public FetchContext {
   std::optional<ResourceRequestBlockedReason> CheckCSPForRequest(
       mojom::blink::RequestContextType,
       network::mojom::RequestDestination request_destination,
+      network::mojom::RequestMode request_mode,
       const KURL&,
       const ResourceLoaderOptions&,
       ReportingDisposition,
@@ -61,6 +62,7 @@ class CORE_EXPORT BaseFetchContext : public FetchContext {
   std::optional<ResourceRequestBlockedReason> CheckAndEnforceCSPForRequest(
       mojom::blink::RequestContextType,
       network::mojom::RequestDestination request_destination,
+      network::mojom::RequestMode request_mode,
       const KURL&,
       const ResourceLoaderOptions&,
       ReportingDisposition,
@@ -83,18 +85,23 @@ class CORE_EXPORT BaseFetchContext : public FetchContext {
   virtual net::SiteForCookies GetSiteForCookies() const = 0;
 
   virtual SubresourceFilter* GetSubresourceFilter() const = 0;
-  virtual bool ShouldBlockWebSocketByMixedContentCheck(const KURL&) const = 0;
+  virtual bool ShouldBlockWebSocketByMixedContentCheck(
+      const KURL&,
+      network::mojom::blink::IPAddressSpace target_address_space) const = 0;
   virtual std::unique_ptr<WebSocketHandshakeThrottle>
   CreateWebSocketHandshakeThrottle() = 0;
+
+  virtual bool IsFrameContext() const { return false; }
 
   // If the optional `alias_url` is non-null, it will be used to perform the
   // check in place of `resource_request.Url()`, e.g. in the case of DNS
   // aliases.
-  bool CalculateIfAdSubresource(
+  ResourceAnnotations CalculateResourceAnnotations(
       const ResourceRequestHead& resource_request,
       base::optional_ref<const KURL> alias_url,
       ResourceType type,
-      const FetchInitiatorInfo& initiator_info) override;
+      const FetchInitiatorInfo& initiator_info,
+      bool scan_javascript_stack) override;
 
  protected:
   BaseFetchContext(const DetachableResourceFetcherProperties& properties,
@@ -151,6 +158,7 @@ class CORE_EXPORT BaseFetchContext : public FetchContext {
   std::optional<ResourceRequestBlockedReason> CheckCSPForRequestInternal(
       mojom::blink::RequestContextType,
       network::mojom::RequestDestination request_destination,
+      network::mojom::RequestMode request_mode,
       const KURL&,
       const ResourceLoaderOptions&,
       ReportingDisposition,

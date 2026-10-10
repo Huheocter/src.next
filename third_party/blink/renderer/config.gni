@@ -15,9 +15,9 @@ if (current_cpu == "arm") {
 }
 
 declare_args() {
-  # If true, use PFFFT for WebAudio FFT support. Do not use for Mac because the
-  # FFT library there is much faster.
-  use_webaudio_pffft = target_os != "mac"
+  # Enable JXL decoder in Blink for JPEG XL image decoding.
+  # Downstream builds can set this to false to exclude JXL code.
+  enable_jxl_decoder = true
 }
 
 declare_args() {
@@ -39,9 +39,6 @@ declare_args() {
   #   -1 means auto-set according to debug/release and platform.
   blink_symbol_level = -1
 
-  # If true, the experimental renderer extensions library will be used.
-  use_blink_extensions_chromeos = is_chromeos
-
   # If true, the WebView renderer extensions library will be used.
   #
   # Android WebView and Chrome on Android both use the same build configuration
@@ -58,16 +55,8 @@ declare_args() {
 
 feature_defines_list = []
 
-if (use_blink_extensions_chromeos) {
-  feature_defines_list += [ "USE_BLINK_EXTENSIONS_CHROMEOS=1" ]
-}
-
 if (use_blink_extensions_webview) {
   feature_defines_list += [ "USE_BLINK_EXTENSIONS_WEBVIEW=1" ]
-}
-
-if (use_webaudio_pffft) {
-  feature_defines_list += [ "WTF_USE_WEBAUDIO_PFFFT=1" ]
 }
 
 if (blink_symbol_level == 2) {

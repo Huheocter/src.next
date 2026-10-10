@@ -34,7 +34,7 @@ void ObjectPaintInvalidator::InvalidateDisplayItemClient(
   // It's caller's responsibility to ensure PaintingLayer's NeedsRepaint is
   // set. Don't set the flag here because getting PaintLayer has cost and the
   // caller can use various ways (e.g.
-  // PaintInvalidatinContext::painting_layer) to reduce the cost.
+  // PaintInvalidationContext::painting_layer) to reduce the cost.
   CheckPaintLayerNeedsRepaint();
 #endif
   TRACE_EVENT_INSTANT2(TRACE_DISABLED_BY_DEFAULT("blink.invalidation"),
@@ -77,8 +77,10 @@ ObjectPaintInvalidatorWithContext::ComputePaintInvalidationReason() {
 
   // Force full paint invalidation if the object has background-clip:text to
   // update the background on any change in the subtree.
-  if (object_.StyleRef().BackgroundClip() == EFillBox::kText)
+  if (object_.StyleRef().BackgroundClip() == EFillBox::kText ||
+      object_.StyleRef().BackgroundClip() == EFillBox::kBorderAreaText) {
     return PaintInvalidationReason::kBackground;
+  }
 
   // Incremental invalidation is only applicable to LayoutBoxes. Return
   // kIncremental. BoxPaintInvalidator may override this reason with a full

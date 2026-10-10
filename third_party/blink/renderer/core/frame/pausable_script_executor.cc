@@ -2,24 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/core/frame/pausable_script_executor.h"
 
 #include <memory>
 #include <utility>
+#include <vector>
 
-#include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/functional/callback.h"
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
 #include "third_party/blink/public/mojom/frame/user_activation_notification_type.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
-#include "third_party/blink/public/platform/web_vector.h"
+#include "third_party/blink/public/web/extension_script_streamer.h"
 #include "third_party/blink/public/web/web_script_execution_callback.h"
 #include "third_party/blink/renderer/bindings/core/v8/sanitize_script_errors.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_evaluation_result.h"
@@ -27,6 +23,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/window_proxy.h"
+#include "third_party/blink/renderer/core/ad_tracker/script_initiation_monitor.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -118,7 +115,7 @@ PromiseAggregator::PromiseAggregator(ScriptState* script_state,
     // wait for the promise (or then-able) to settle, or will immediately finish
     // with the value. Thus, it's safe to just do this for every value.
     ToResolvedPromise<IDLAny>(script_state, values[i])
-        .React(
+        .Then(
             script_state,
             MakeGarbageCollected<OnSettled>(this, i, /*was_fulfilled=*/true),
             MakeGarbageCollected<OnSettled>(this, i, /*was_fulfilled=*/false));
@@ -149,9 +146,13 @@ class WebScriptExecutor : public PausableScriptExecutor::Executor {
     for (const auto& source : sources_) {
       // Note: An error event in an isolated world will never be dispatched to
       // a foreign world.
+      InlineScriptStreamer* streamer =
+          source.script_streamer
+              ? source.script_streamer->GetInlineScriptStreamer()
+              : nullptr;
       ScriptEvaluationResult result =
           ClassicScript::CreateUnspecifiedScript(
-              source, SanitizeScriptErrors::kDoNotSanitize)
+              source, SanitizeScriptErrors::kDoNotSanitize, streamer)
               ->RunScriptOnScriptStateAndReturnValue(script_state,
                                                      execute_script_policy_);
       results.push_back(result.GetSuccessValueOrEmpty());
@@ -190,8 +191,10 @@ V8FunctionExecutor::V8FunctionExecutor(v8::Isolate* isolate,
                                        v8::Local<v8::Value> argv[])
     : function_(isolate, function), receiver_(isolate, receiver) {
   args_.reserve(base::checked_cast<wtf_size_t>(argc));
-  for (int i = 0; i < argc; ++i)
-    args_.push_back(TraceWrapperV8Reference<v8::Value>(isolate, argv[i]));
+  for (int i = 0; i < argc; ++i) {
+    args_.push_back(
+        TraceWrapperV8Reference<v8::Value>(isolate, UNSAFE_TODO(argv[i])));
+  }
 }
 
 v8::LocalVector<v8::Value> V8FunctionExecutor::Execute(
@@ -234,7 +237,7 @@ void PausableScriptExecutor::CreateAndRun(
     v8::Local<v8::Value> argv[],
     mojom::blink::WantResultOption want_result_option,
     WebScriptExecutionCallback callback) {
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   ScriptState* script_state = ScriptState::From(isolate, context);
   if (!script_state->ContextIsValid()) {
     if (callback)
@@ -247,8 +250,9 @@ void PausableScriptExecutor::CreateAndRun(
           mojom::blink::LoadEventBlockingOption::kDoNotBlock,
           want_result_option, mojom::blink::PromiseResultOption::kDoNotWait,
           std::move(callback),
-          MakeGarbageCollected<V8FunctionExecutor>(
-              script_state->GetIsolate(), function, receiver, argc, argv));
+          MakeGarbageCollected<V8FunctionExecutor>(isolate, function, receiver,
+                                                   argc, argv),
+          /*script_injector_id=*/String());
   executor->Run();
 }
 
@@ -261,12 +265,14 @@ void PausableScriptExecutor::CreateAndRun(
     mojom::blink::LoadEventBlockingOption blocking_option,
     mojom::blink::WantResultOption want_result_option,
     mojom::blink::PromiseResultOption promise_result_option,
-    WebScriptExecutionCallback callback) {
+    WebScriptExecutionCallback callback,
+    const String& script_injector_id) {
   auto* executor = MakeGarbageCollected<PausableScriptExecutor>(
       script_state, user_activation_option, blocking_option, want_result_option,
       promise_result_option, std::move(callback),
       MakeGarbageCollected<WebScriptExecutor>(std::move(sources),
-                                              execute_script_policy));
+                                              execute_script_policy),
+      script_injector_id);
   switch (evaluation_timing) {
     case mojom::blink::EvaluationTiming::kAsynchronous:
       executor->RunAsync();
@@ -296,7 +302,8 @@ PausableScriptExecutor::PausableScriptExecutor(
     mojom::blink::WantResultOption want_result_option,
     mojom::blink::PromiseResultOption promise_result_option,
     WebScriptExecutionCallback callback,
-    Executor* executor)
+    Executor* executor,
+    const String& script_injector_id)
     : ExecutionContextLifecycleObserver(ExecutionContext::From(script_state)),
       script_state_(script_state),
       callback_(std::move(callback)),
@@ -304,6 +311,7 @@ PausableScriptExecutor::PausableScriptExecutor(
       blocking_option_(blocking_option),
       want_result_option_(want_result_option),
       wait_for_promise_(promise_result_option),
+      script_injector_id_(script_injector_id),
       executor_(executor) {
   CHECK(script_state_);
   CHECK(script_state_->ContextIsValid());
@@ -335,8 +343,8 @@ void PausableScriptExecutor::PostExecuteAndDestroySelf(
     ExecutionContext* context) {
   task_handle_ = PostCancellableTask(
       *context->GetTaskRunner(TaskType::kJavascriptTimerImmediate), FROM_HERE,
-      WTF::BindOnce(&PausableScriptExecutor::ExecuteAndDestroySelf,
-                    WrapPersistent(this)));
+      BindOnce(&PausableScriptExecutor::ExecuteAndDestroySelf,
+               WrapPersistent(this)));
 }
 
 void PausableScriptExecutor::ExecuteAndDestroySelf() {
@@ -356,7 +364,22 @@ void PausableScriptExecutor::ExecuteAndDestroySelf() {
     }
   }
 
-  v8::LocalVector<v8::Value> results = executor_->Execute(script_state_);
+  v8::LocalVector<v8::Value> results(script_state_->GetIsolate());
+  {
+    std::optional<
+        ScriptInitiationMonitor::ScopedInjectedExtensionScriptExecution>
+        extension_script_scope;
+    if (!script_injector_id_.empty()) {
+      if (auto* window = DynamicTo<LocalDOMWindow>(GetExecutionContext())) {
+        if (LocalFrame* frame = window->GetFrame()) {
+          extension_script_scope.emplace(
+              frame->GetOrCreateScriptInitiationMonitor(), script_injector_id_);
+        }
+      }
+    }
+
+    results = executor_->Execute(script_state_);
+  }
 
   // The script may have removed the frame, in which case contextDestroyed()
   // will have handled the disposal/callback.
@@ -373,8 +396,8 @@ void PausableScriptExecutor::ExecuteAndDestroySelf() {
       keep_alive_ = this;
       MakeGarbageCollected<PromiseAggregator>(
           script_state_, results,
-          WTF::BindOnce(&PausableScriptExecutor::HandleResults,
-                        WrapWeakPersistent(this)));
+          BindOnce(&PausableScriptExecutor::HandleResults,
+                   WrapWeakPersistent(this)));
       break;
 
     case mojom::blink::PromiseResultOption::kDoNotWait:
@@ -411,7 +434,7 @@ void PausableScriptExecutor::HandleResults(
           }
           if (std::unique_ptr<base::Value> new_value = converter->FromV8Value(
                   results.back(), script_state_->GetContext())) {
-            value = base::Value::FromUniquePtrValue(std::move(new_value));
+            value = std::move(*new_value);
           }
         }
         break;

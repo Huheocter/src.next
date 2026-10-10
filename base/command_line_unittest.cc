@@ -2,23 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "base/command_line.h"
 
+#include <array>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/debug/debugging_buildflags.h"
 #include "base/files/file_path.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/gtest_util.h"
 #include "build/build_config.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -104,8 +102,8 @@ TEST(CommandLineTest, CommandLineConstructor) {
   EXPECT_EQ("", cl.GetSwitchValueASCII("foo"));
   EXPECT_EQ("", cl.GetSwitchValueASCII("bar"));
   EXPECT_EQ("", cl.GetSwitchValueASCII("cruller"));
-  EXPECT_EQ("--dog=canine --cat=feline", cl.GetSwitchValueASCII(
-      "other-switches"));
+  EXPECT_EQ("--dog=canine --cat=feline",
+            cl.GetSwitchValueASCII("other-switches"));
   EXPECT_EQ("45--output-rotation", cl.GetSwitchValueASCII("input-translation"));
 
   const CommandLine::StringVector& args = cl.GetArgs();
@@ -178,8 +176,8 @@ TEST(CommandLineTest, CommandLineFromString) {
   EXPECT_EQ("", cl.GetSwitchValueASCII("foo"));
   EXPECT_EQ("", cl.GetSwitchValueASCII("bar"));
   EXPECT_EQ("", cl.GetSwitchValueASCII("cruller"));
-  EXPECT_EQ("--dog=canine --cat=feline", cl.GetSwitchValueASCII(
-      "other-switches"));
+  EXPECT_EQ("--dog=canine --cat=feline",
+            cl.GetSwitchValueASCII("other-switches"));
   EXPECT_EQ("45--output-rotation", cl.GetSwitchValueASCII("input-translation"));
   EXPECT_EQ(kTricky, cl.GetSwitchValueNative("quotes"));
 
@@ -326,6 +324,113 @@ TEST(CommandLineTest, AppendSwitches) {
 #endif
 }
 
+TEST(CommandLineTest, AppendArgWithSwitchPrefixPreservesEquals) {
+  CommandLine cl(FilePath(FILE_PATH_LITERAL("Program")));
+  cl.AppendArg("--empty_val_switch=");
+  cl.AppendSwitch("no_val_switch");
+
+  // Verify that GetArgumentsString() preserves the trailing '=' for an explicit
+  // empty value, distinguishing it from a switch without a value.
+  EXPECT_EQ(FILE_PATH_LITERAL("--no_val_switch --empty_val_switch="),
+            cl.GetArgumentsString());
+}
+
+// Test methods for appending valid UTF8 values to a command line.
+TEST(CommandLineTest, UTF8Valid) {
+  std::string ascii_switch = "ascii";
+  std::string ascii_value = "Opdateringkontroleringfout";
+  std::string arabic_switch = "arabic";
+  std::string arabic_value = "خطأ في عملية التحقق من التحديث: 5555.";
+  std::string hindi_switch = "hindi";
+  std::string hindi_value = "अपडेट जांच में यह गड़बड़ी है: 5555.";
+  std::string japanese_switch = "japanese";
+  std::string japanese_value = "更新確認エラー: 5555。";
+
+  CommandLine cl(FilePath(FILE_PATH_LITERAL("Program")));
+
+  cl.AppendSwitchUTF8(ascii_switch, ascii_value);
+  cl.AppendSwitchUTF8(arabic_switch, arabic_value);
+  cl.AppendSwitchUTF8(hindi_switch, hindi_value);
+  cl.AppendSwitchUTF8(japanese_switch, japanese_value);
+
+  EXPECT_TRUE(cl.HasSwitch(ascii_switch));
+  EXPECT_EQ(ascii_value, cl.GetSwitchValueASCII(ascii_switch));
+  EXPECT_EQ(ascii_value, cl.GetSwitchValueUTF8(ascii_switch));
+  EXPECT_TRUE(cl.HasSwitch(arabic_switch));
+  EXPECT_TRUE(cl.GetSwitchValueASCII(arabic_switch).empty());
+  EXPECT_EQ(arabic_value, cl.GetSwitchValueUTF8(arabic_switch));
+  EXPECT_TRUE(cl.HasSwitch(hindi_switch));
+  EXPECT_TRUE(cl.GetSwitchValueASCII(hindi_switch).empty());
+  EXPECT_EQ(hindi_value, cl.GetSwitchValueUTF8(hindi_switch));
+  EXPECT_TRUE(cl.HasSwitch(japanese_switch));
+  EXPECT_TRUE(cl.GetSwitchValueASCII(japanese_switch).empty());
+  EXPECT_EQ(japanese_value, cl.GetSwitchValueUTF8(japanese_switch));
+}
+
+class CommandLineUTF8InvalidTest
+    : public ::testing::TestWithParam<std::string> {
+ protected:
+  std::string switch_value() const { return GetParam(); }
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    CommandLineUTF8InvalidTestCases,
+    CommandLineUTF8InvalidTest,
+    ::testing::Values(
+        // Invalid encoding of U+1FFFE (0x8F instead of 0x9F)
+        "\xF0\x8F\xBF\xBE",
+
+        // Surrogate code points
+        "\xED\xA0\x80\xED\xBF\xBF",
+        "\xED\xA0\x8F",
+        "\xED\xBF\xBF",
+
+        // Overlong sequences
+        "\xC0\x80",                  // U+0000
+        "\xC1\x80\xC1\x81",          // "AB"
+        "\xE0\x80\x80",              // U+0000
+        "\xE0\x82\x80",              // U+0080
+        "\xE0\x9F\xBF",              // U+07FF
+        "\xF0\x80\x80\x8D",          // U+000D
+        "\xF0\x80\x82\x91",          // U+0091
+        "\xF0\x80\xA0\x80",          // U+0800
+        "\xF0\x8F\xBB\xBF",          // U+FEFF (BOM)
+        "\xF8\x80\x80\x80\xBF",      // U+003F
+        "\xFC\x80\x80\x80\xA0\xA5",  // U+00A5
+
+        // Beyond U+10FFFF (the upper limit of Unicode codespace)
+        "\xF4\x90\x80\x80",          // U+110000
+        "\xF8\xA0\xBF\x80\xBF",      // 5 bytes
+        "\xFC\x9C\xBF\x80\xBF\x80",  // 6 bytes
+
+        // BOM in UTF-16(BE|LE)
+        "\xFE\xFF",
+        "\xFF\xFE",
+
+        // Strings in legacy encodings. We can certainly make up strings
+        // in a legacy encoding that are valid in UTF-8, but in real data,
+        // most of them are invalid as UTF-8.
+
+        // cafe with U+00E9 in ISO-8859-1
+        "caf\xE9",
+        // U+AC00, U+AC001 in EUC-KR
+        "\xB0\xA1\xB0\xA2",
+        // U+4F60 U+597D in Big5
+        "\xA7\x41\xA6\x6E",
+        // "abc" with U+201[CD] in windows-125[0-8]
+        // clang-format off
+        "\x93" "abc\x94",
+        // clang-format on
+        // U+0639 U+064E U+0644 U+064E in ISO-8859-6
+        "\xD9\xEE\xE4\xEE",
+        // U+03B3 U+03B5 U+03B9 U+03AC in ISO-8859-7
+        "\xE3\xE5\xE9\xDC"));
+
+TEST_P(CommandLineUTF8InvalidTest, Test) {
+  CommandLine cl(FilePath(FILE_PATH_LITERAL("Program")));
+  EXPECT_DCHECK_DEATH({ cl.AppendSwitchUTF8("invalid", switch_value()); });
+}
+
 TEST(CommandLineTest, AppendSwitchesDashDash) {
   const CommandLine::CharType* const raw_argv[] = {FILE_PATH_LITERAL("prog"),
                                                    FILE_PATH_LITERAL("--"),
@@ -408,7 +513,7 @@ TEST_P(CommandLineQuoteAfterTest, TestCases) {
   std::wstring recreated_command_line;
   for (int i = 1; i < num_args; ++i) {
     recreated_command_line.append(
-        CommandLine::QuoteForCommandLineToArgvW(argv.get()[i]));
+        CommandLine::QuoteForCommandLineToArgvW(UNSAFE_TODO(argv.get()[i])));
 
     if (i + 1 < num_args) {
       recreated_command_line.push_back(L' ');
@@ -528,10 +633,12 @@ TEST(CommandLineTest, Copy) {
   CommandLine assigned = *initial;
   CommandLine::SwitchMap switch_map = initial->GetSwitches();
   initial.reset();
-  for (const auto& pair : switch_map)
+  for (const auto& pair : switch_map) {
     EXPECT_TRUE(copy_constructed.HasSwitch(pair.first));
-  for (const auto& pair : switch_map)
+  }
+  for (const auto& pair : switch_map) {
     EXPECT_TRUE(assigned.HasSwitch(pair.first));
+  }
 }
 
 TEST(CommandLineTest, CopySwitches) {
@@ -563,10 +670,11 @@ TEST(CommandLineTest, Move) {
       "bbbbbbbbb",
       "c",
   };
-  static constexpr CommandLine::StringViewType kArgs[] = {
-      FILE_PATH_LITERAL("beebop"),
-      FILE_PATH_LITERAL("alouie"),
-  };
+  constexpr static const auto kArgs =
+      std::to_array<CommandLine::StringViewType>({
+          FILE_PATH_LITERAL("beebop"),
+          FILE_PATH_LITERAL("alouie"),
+      });
   CommandLine initial(CommandLine::NO_PROGRAM);
   for (auto a_switch : kSwitches) {
     initial.AppendSwitch(a_switch);
@@ -831,6 +939,80 @@ TEST(CommandLineTest, ParseAsSingleArgument) {
             cl_without_arg.GetProgram());
   EXPECT_TRUE(cl_without_arg.GetArgs().empty());
 }
+
+TEST(CommandLineTest, ParseAsSingleArgumentWithSameSwitchInProgramPath) {
+  // This test verifies that:
+  // 1. `--single-argument` embedded within the quoted program path is correctly
+  //    ignored and not treated as the trigger switch.
+  // 2. Legitimate switches placed before the actual `--single-argument` switch
+  //    (like `--switch_before`) are still correctly parsed and preserved.
+  // 3. The actual `--single-argument` switch is correctly identified, and
+  //    everything after it is treated as the single argument.
+  CommandLine cl = CommandLine::FromString(FILE_PATH_LITERAL(
+      "\"program --single-argument\" --switch_before=arg_before "
+      "--single-argument actual_arg"));
+  EXPECT_EQ(cl.GetProgram().value(),
+            FILE_PATH_LITERAL("program --single-argument"));
+  EXPECT_EQ(cl.GetArgs(),
+            CommandLine::StringVector({FILE_PATH_LITERAL("actual_arg")}));
+  EXPECT_TRUE(cl.HasSwitch("switch_before"));
+  EXPECT_EQ(cl.GetSwitchValueASCII("switch_before"), "arg_before");
+}
+
+TEST(CommandLineTest, ParseAsSingleArgumentWithSwitchAfter) {
+  // This test verifies that once `--single-argument` is encountered, any
+  // subsequent switch-like strings (e.g., `--switch_after`) are treated as part
+  // of the single argument payload and are not parsed as separate switches.
+  CommandLine cl = CommandLine::FromString(FILE_PATH_LITERAL(
+      "program --single-argument actual_arg --switch_after=arg_after"));
+  EXPECT_EQ(cl.GetProgram(), FilePath(FILE_PATH_LITERAL("program")));
+  EXPECT_EQ(cl.GetArgs(), CommandLine::StringVector({FILE_PATH_LITERAL(
+                              "actual_arg --switch_after=arg_after")}));
+  EXPECT_FALSE(cl.HasSwitch("switch_after"));
+}
+
+TEST(CommandLineTest, ParseAsSingleArgumentWithLeadingSpaces) {
+  CommandLine cl = CommandLine::FromString(
+      FILE_PATH_LITERAL("  \"program\" --single-argument actual_arg"));
+  EXPECT_EQ(FilePath(FILE_PATH_LITERAL("program")), cl.GetProgram());
+  EXPECT_EQ(cl.GetArgs(),
+            CommandLine::StringVector({FILE_PATH_LITERAL("actual_arg")}));
+}
+
+TEST(CommandLineTest, ParseAsSingleArgumentWithLeadingSpacesNoQuotes) {
+  CommandLine cl = CommandLine::FromString(
+      FILE_PATH_LITERAL("  program --single-argument actual_arg"));
+  EXPECT_EQ(FilePath(FILE_PATH_LITERAL("program")), cl.GetProgram());
+  EXPECT_EQ(cl.GetArgs(),
+            CommandLine::StringVector({FILE_PATH_LITERAL("actual_arg")}));
+}
+
+TEST(CommandLineTest,
+     ParseAsSingleArgumentWithLeadingSpacesAndSameSwitchInProgramPath) {
+  CommandLine cl = CommandLine::FromString(FILE_PATH_LITERAL(
+      "  \"program --single-argument\" --single-argument actual_arg"));
+  EXPECT_EQ(FilePath(FILE_PATH_LITERAL("program --single-argument")),
+            cl.GetProgram());
+  EXPECT_EQ(cl.GetArgs(),
+            CommandLine::StringVector({FILE_PATH_LITERAL("actual_arg")}));
+}
+
+TEST(CommandLineTest, ParseAsSingleArgumentWithUnmatchedQuote) {
+  CommandLine cl = CommandLine::FromString(
+      FILE_PATH_LITERAL("\"program --single-argument actual_arg"));
+  EXPECT_EQ(FilePath(FILE_PATH_LITERAL("program --single-argument actual_arg")),
+            cl.GetProgram());
+  EXPECT_TRUE(cl.GetArgs().empty());
+}
+
+TEST(CommandLineTest, ParseAsSingleArgumentWithUnquotedSpaces) {
+  CommandLine cl = CommandLine::FromString(
+      FILE_PATH_LITERAL("program path --single-argument actual_arg"));
+  EXPECT_EQ(FilePath(FILE_PATH_LITERAL("program")), cl.GetProgram());
+  EXPECT_EQ(cl.GetArgs(),
+            CommandLine::StringVector({FILE_PATH_LITERAL("actual_arg")}));
+}
+
 #endif  // BUILDFLAG(IS_WIN)
 
 #if BUILDFLAG(ENABLE_COMMANDLINE_SEQUENCE_CHECKS)

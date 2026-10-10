@@ -11,16 +11,18 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
+#include "extensions/browser/disable_reason.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest.h"
 #include "net/dns/mock_host_resolver.h"
@@ -40,7 +42,7 @@ class ChromeAppAPITest : public extensions::ExtensionBrowserTest {
 
   bool IsAppInstalledInMainFrame() {
     return IsAppInstalledInFrame(browser()
-                                     ->tab_strip_model()
+                                     ->GetTabStripModel()
                                      ->GetActiveWebContents()
                                      ->GetPrimaryMainFrame());
   }
@@ -54,7 +56,7 @@ class ChromeAppAPITest : public extensions::ExtensionBrowserTest {
 
   std::string InstallStateInMainFrame() {
     return InstallStateInFrame(browser()
-                                   ->tab_strip_model()
+                                   ->GetTabStripModel()
                                    ->GetActiveWebContents()
                                    ->GetPrimaryMainFrame());
   }
@@ -72,7 +74,7 @@ class ChromeAppAPITest : public extensions::ExtensionBrowserTest {
 
   std::string RunningStateInMainFrame() {
     return RunningStateInFrame(browser()
-                                   ->tab_strip_model()
+                                   ->GetTabStripModel()
                                    ->GetActiveWebContents()
                                    ->GetPrimaryMainFrame());
   }
@@ -87,7 +89,7 @@ class ChromeAppAPITest : public extensions::ExtensionBrowserTest {
  private:
   content::RenderFrameHost* GetIFrame() {
     return content::FrameMatchingPredicate(
-        browser()->tab_strip_model()->GetActiveWebContents()->GetPrimaryPage(),
+        browser()->GetTabStripModel()->GetActiveWebContents()->GetPrimaryPage(),
         base::BindRepeating(&content::FrameIsChildOfMainFrame));
   }
 };
@@ -119,7 +121,7 @@ IN_PROC_BROWSER_TEST_F(ChromeAppAPITest, IsInstalled) {
   const char kGetAppDetails[] =
       "JSON.stringify(window.chrome.app.getDetails());";
   EXPECT_EQ("null", content::EvalJs(
-                        browser()->tab_strip_model()->GetActiveWebContents(),
+                        browser()->GetTabStripModel()->GetActiveWebContents(),
                         kGetAppDetails));
 
   // Check that an app page has chrome.app.isInstalled = true.
@@ -130,12 +132,13 @@ IN_PROC_BROWSER_TEST_F(ChromeAppAPITest, IsInstalled) {
   // chrome.app.getDetails().
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), app_url));
   std::string result =
-      content::EvalJs(browser()->tab_strip_model()->GetActiveWebContents(),
+      content::EvalJs(browser()->GetTabStripModel()->GetActiveWebContents(),
                       kGetAppDetails)
           .ExtractString();
-  std::optional<base::Value> result_value = base::JSONReader::Read(result);
+  std::optional<base::Value> result_value =
+      base::JSONReader::Read(result, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   ASSERT_TRUE(result_value && result_value->is_dict());
-  base::Value::Dict& app_details = result_value.value().GetDict();
+  base::DictValue& app_details = result_value.value().GetDict();
 
   // extension->manifest() does not contain the id.
   app_details.Remove("id");
@@ -146,7 +149,7 @@ IN_PROC_BROWSER_TEST_F(ChromeAppAPITest, IsInstalled) {
 
   // Should not be able to alter window.chrome.app.isInstalled from javascript";
   EXPECT_EQ("true", content::EvalJs(
-                        browser()->tab_strip_model()->GetActiveWebContents(),
+                        browser()->GetTabStripModel()->GetActiveWebContents(),
                         "    (function() {"
                         "        var value = window.chrome.app.isInstalled;"
                         "        window.chrome.app.isInstalled = !value;"
@@ -159,7 +162,7 @@ IN_PROC_BROWSER_TEST_F(ChromeAppAPITest, IsInstalled) {
 }
 
 // Test accessing app.isInstalled when the context has been invalidated (e.g.
-// by removing the frame). Regression test for https://crbug.com/855853.
+// by removing the frame). Regression test for https://crbug.com/41396418.
 IN_PROC_BROWSER_TEST_F(ChromeAppAPITest, IsInstalledFromRemovedFrame) {
   GURL app_url =
       embedded_test_server()->GetURL("app.com", "/extensions/test_file.html");
@@ -182,7 +185,7 @@ IN_PROC_BROWSER_TEST_F(ChromeAppAPITest, IsInstalledFromRemovedFrame) {
          });
          )";
   EXPECT_EQ(true, content::EvalJs(
-                      browser()->tab_strip_model()->GetActiveWebContents(),
+                      browser()->GetTabStripModel()->GetActiveWebContents(),
                       base::StringPrintf(kScript, app_url.spec().c_str())));
 }
 
@@ -214,19 +217,16 @@ IN_PROC_BROWSER_TEST_F(ChromeAppAPITest, InstallAndRunningState) {
   EXPECT_TRUE(IsAppInstalledInMainFrame());
 
   // Disable the extension and verify the state.
-  extensions::ExtensionService* service =
-      extensions::ExtensionSystem::Get(browser()->profile())
-          ->extension_service();
-  service->DisableExtension(
+  extension_registrar()->DisableExtension(
       extension->id(),
-      extensions::disable_reason::DISABLE_PERMISSIONS_INCREASE);
+      {extensions::disable_reason::DISABLE_PERMISSIONS_INCREASE});
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), app_url));
 
   EXPECT_EQ("disabled", InstallStateInMainFrame());
   EXPECT_EQ("cannot_run", RunningStateInMainFrame());
   EXPECT_FALSE(IsAppInstalledInMainFrame());
 
-  service->EnableExtension(extension->id());
+  extension_registrar()->EnableExtension(extension->id());
   EXPECT_EQ("installed", InstallStateInMainFrame());
   EXPECT_EQ("ready_to_run", RunningStateInMainFrame());
   EXPECT_FALSE(IsAppInstalledInMainFrame());
@@ -263,48 +263,3 @@ IN_PROC_BROWSER_TEST_F(ChromeAppAPITest, InstallAndRunningStateFrame) {
   EXPECT_FALSE(IsAppInstalledInIFrame());
 }
 
-class ChromeAppAPIFencedFrameTest : public ChromeAppAPITest {
- public:
-  ChromeAppAPIFencedFrameTest() {
-    // kPrivacySandboxAdsAPIOverride must also be set since kFencedFrames
-    // cannot be enabled independently without it.
-    feature_list_.InitWithFeaturesAndParameters(
-        {{blink::features::kFencedFrames, {}},
-         {blink::features::kFencedFramesAPIChanges, {}},
-         {blink::features::kFencedFramesDefaultMode, {}},
-         {features::kPrivacySandboxAdsAPIsOverride, {}}},
-        {/* disabled_features */});
-  }
-
-  ~ChromeAppAPIFencedFrameTest() override = default;
-
-  void SetUpOnMainThread() override {
-    ChromeAppAPITest::SetUpOnMainThread();
-    https_server()->AddDefaultHandlers(GetChromeTestDataDir());
-    https_server()->SetSSLConfig(net::EmbeddedTestServer::CERT_TEST_NAMES);
-    ASSERT_TRUE(https_server()->Start());
-  }
-
-  net::EmbeddedTestServer* https_server() { return &https_server_; }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-  net::EmbeddedTestServer https_server_{net::EmbeddedTestServer::TYPE_HTTPS};
-};
-
-IN_PROC_BROWSER_TEST_F(ChromeAppAPIFencedFrameTest, NoInfo) {
-  GURL app_url = https_server()->GetURL(
-      "a.test", "/extensions/get_app_details_for_fenced_frame.html");
-
-  // Check the install and running state of a fenced frame running
-  // within an app.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), app_url));
-
-  auto render_frame_hosts = CollectAllRenderFrameHosts(
-      browser()->tab_strip_model()->GetActiveWebContents());
-  ASSERT_EQ(2u, render_frame_hosts.size());
-
-  content::RenderFrameHost* fenced_frame = render_frame_hosts.at(1);
-  ASSERT_TRUE(fenced_frame);
-  EXPECT_EQ("cannot_run", RunningStateInFrame(fenced_frame));
-}

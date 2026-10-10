@@ -26,8 +26,6 @@ namespace blink {
 class CORE_EXPORT MediaValuesCached final : public MediaValues {
  public:
   struct CORE_EXPORT MediaValuesCachedData final {
-    USING_FAST_MALLOC(MediaValuesCachedData);
-
    public:
     // Members variables must be thread safe, since they're copied to the parser
     // thread
@@ -71,7 +69,7 @@ class CORE_EXPORT MediaValuesCached final : public MediaValues {
     ui::mojom::blink::WindowShowState window_show_state =
         ui::mojom::blink::WindowShowState::kDefault;
     bool resizable = true;
-    ColorSpaceGamut color_gamut = ColorSpaceGamut::kUnknown;
+    ColorSpaceGamut color_gamut = ColorSpaceGamut::SRGB;
     mojom::blink::PreferredColorScheme preferred_color_scheme =
         mojom::blink::PreferredColorScheme::kLight;
     mojom::blink::PreferredContrast preferred_contrast =

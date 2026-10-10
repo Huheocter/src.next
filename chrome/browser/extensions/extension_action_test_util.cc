@@ -14,6 +14,7 @@
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model_factory.h"
 #include "components/sessions/content/session_tab_helper.h"
+#include "components/sessions/core/session_id.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_action.h"
 #include "extensions/browser/extension_action_manager.h"
@@ -92,7 +93,7 @@ ToolbarActionsModel* CreateToolbarModelImpl(Profile* profile,
 
 }  // namespace
 
-size_t GetVisiblePageActionCount(content::WebContents* web_contents) {
+size_t GetActivePageActionCount(content::WebContents* web_contents) {
   return GetPageActionCount(web_contents, true);
 }
 

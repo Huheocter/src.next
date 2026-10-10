@@ -10,19 +10,20 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/memory/weak_ptr.h"
+#include "base/run_loop.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
+#include "content/browser/btm/btm_service_impl.h"
 #include "content/public/browser/browser_context.h"
-#include "content/public/browser/resource_context.h"
 #include "content/public/browser/shared_cors_origin_access_list.h"
+#include "mojo/public/cpp/bindings/unique_receiver_set.h"
+#include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
+#include "third_party/blink/public/common/tokens/tokens.h"
+#include "third_party/blink/public/mojom/frame/remote_frame.mojom.h"
 
 namespace media {
 class VideoDecodePerfHistory;
 class WebrtcVideoPerfHistory;
-namespace learning {
-class LearningSession;
-class LearningSessionImpl;
-}  // namespace learning
 }  // namespace media
 
 namespace storage {
@@ -40,10 +41,14 @@ class BrowserContextImpl;
 class BrowsingDataRemoverImpl;
 class DownloadManager;
 class InMemoryFederatedPermissionContext;
-class NavigationEntryScreenshotManager;
+class NavigationStateKeepAlive;
 class PermissionController;
 class PrefetchService;
 class StoragePartitionImplMap;
+
+#if BUILDFLAG(IS_ANDROID)
+class NavigationEntryScreenshotManager;
+#endif  // BUILDFLAG(IS_ANDROID)
 
 // content-internal parts of BrowserContext.
 //
@@ -58,6 +63,7 @@ class CONTENT_EXPORT BrowserContextImpl {
   BrowserContextImpl& operator=(const BrowserContextImpl&) = delete;
 
   const std::string& UniqueId() const { return unique_id_; }
+  const base::UnguessableToken& UniqueToken() const { return unique_token_; }
 
   bool ShutdownStarted();
   void NotifyWillBeDestroyed();
@@ -72,8 +78,6 @@ class CONTENT_EXPORT BrowserContextImpl {
   }
 
   BrowsingDataRemoverImpl* GetBrowsingDataRemover();
-
-  media::learning::LearningSession* GetLearningSession();
 
   storage::ExternalMountPoints* GetMountPoints();
 
@@ -102,7 +106,9 @@ class CONTENT_EXPORT BrowserContextImpl {
   void SetPrefetchServiceForTesting(
       std::unique_ptr<PrefetchService> prefetch_service);
 
+#if BUILDFLAG(IS_ANDROID)
   NavigationEntryScreenshotManager* GetNavigationEntryScreenshotManager();
+#endif  // BUILDFLAG(IS_ANDROID)
 
   InMemoryFederatedPermissionContext* GetFederatedPermissionContext();
   void ResetFederatedPermissionContext();
@@ -111,9 +117,43 @@ class CONTENT_EXPORT BrowserContextImpl {
   // Write a representation of this object into a trace.
   void WriteIntoTrace(perfetto::TracedProto<TraceProto> context) const;
 
-  ResourceContext* GetResourceContext() const {
-    return resource_context_.get();
-  }
+  BtmServiceImpl* GetBtmService();
+  // If the BTM database file should be deleted, wait for it. Otherwise, return
+  // immediately.
+  //
+  // TODO: crbug.com/356624038 - delete this method when the BTM feature flag is
+  // removed.
+  void WaitForBtmCleanupForTesting();
+
+  // Store `receiver` and its corresponding `handle`. These will be kept alive
+  // as long as the remote endpoint of `receiver` is still alive on the renderer
+  // side. The receiver will be automatically deleted when the endpoint is
+  // disconnected.
+  void RegisterKeepAliveHandle(
+      mojo::PendingReceiver<blink::mojom::NavigationStateKeepAliveHandle>
+          receiver,
+      std::unique_ptr<NavigationStateKeepAlive> handle);
+
+  // Get the InitiatorNavigationState associated with `initiator_document_token`
+  // and `initiator_state_token`.
+  // See `initiator_navigation_state_map_`.
+  scoped_refptr<InitiatorNavigationState> GetInitiatorNavigationState(
+      const blink::DocumentToken& initiator_document_token,
+      const blink::InitiatorStateToken& initiator_state_token);
+
+  // Adds the InitiatorNavigationState to the InitiatorNavigationStateMap. This
+  // should be called when creating an InitiatiorNavigationState.
+  // Returns false if the map already has an entry for
+  // `initiator_navigation_state`'s `initiator_state_token` and
+  // `initiator_document_token`, in which case the existing value is not
+  // overridden.
+  bool AddInitiatorNavigationStateToMap(
+      InitiatorNavigationState* initiator_navigation_state);
+
+  // Removes the InitiatorNavigationState from the InitiatorNavigationStateMap.
+  // This should be called when the InitiatorNavigationState is destructed.
+  void RemoveInitiatorNavigationStateFromMap(
+      InitiatorNavigationState* initiator_navigation_state);
 
  private:
   // Creates the media service for storing/retrieving WebRTC encoding and
@@ -121,6 +161,13 @@ class CONTENT_EXPORT BrowserContextImpl {
   // because all SiteInstances should have similar performance and stats are not
   // exposed to the web directly, so privacy is not compromised.
   std::unique_ptr<media::WebrtcVideoPerfHistory> CreateWebrtcVideoPerfHistory();
+
+  // Delete any existing BTM database file if BTM is disabled (because it's not
+  // possible for the user to clear it through the browser UI).
+  //
+  // TODO: crbug.com/356624038 - delete this method when the BTM feature flag is
+  // removed.
+  void MaybeCleanupBtm();
 
   // BrowserContextImpl is owned and build from BrowserContext constructor.
   // TODO(crbug.com/40169693): Invert the dependency. Make BrowserContext
@@ -130,7 +177,8 @@ class CONTENT_EXPORT BrowserContextImpl {
   explicit BrowserContextImpl(BrowserContext* self);
   raw_ptr<BrowserContext> self_;
 
-  const std::string unique_id_ = base::UnguessableToken::Create().ToString();
+  const base::UnguessableToken unique_token_ = base::UnguessableToken::Create();
+  const std::string unique_id_ = unique_token_.ToString();
   bool will_be_destroyed_soon_ = false;
 
   std::unique_ptr<StoragePartitionImplMap> storage_partition_map_;
@@ -141,24 +189,65 @@ class CONTENT_EXPORT BrowserContextImpl {
   std::unique_ptr<PermissionController> permission_controller_;
   scoped_refptr<BackgroundSyncScheduler> background_sync_scheduler_;
   std::unique_ptr<PrefetchService> prefetch_service_;
+#if BUILDFLAG(IS_ANDROID)
   std::unique_ptr<NavigationEntryScreenshotManager>
       nav_entry_screenshot_manager_;
+#endif  // BUILDFLAG(IS_ANDROID)
   std::unique_ptr<InMemoryFederatedPermissionContext>
       federated_permission_context_;
 
-  std::unique_ptr<media::learning::LearningSessionImpl> learning_session_;
   std::unique_ptr<media::VideoDecodePerfHistory> video_decode_perf_history_;
   std::unique_ptr<media::WebrtcVideoPerfHistory> webrtc_video_perf_history_;
 
-  // TODO(crbug.com/40604019): Get rid of ResourceContext.
-  // Created on the UI thread, otherwise lives on and is destroyed on the IO
-  // thread.
-  std::unique_ptr<ResourceContext> resource_context_ =
-      std::make_unique<ResourceContext>();
+  // Manages BTM for all WebContentses using this browser context.
+  std::unique_ptr<BtmServiceImpl> btm_service_;
+  // If BTM is disabled, any existing database file is asynchronously deleted
+  // when the BrowserContextImpl is created. This RunLoop allows tests to wait
+  // for the deletion to complete.
+  //
+  // TODO: crbug.com/356624038 - delete this when the BTM feature flag is
+  // removed.
+  base::RunLoop btm_cleanup_loop_;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   scoped_refptr<storage::ExternalMountPoints> external_mount_points_;
 #endif
+
+  // Maps initiator state tokens to InitiatorNavigationStates. There is exactly
+  // one InitiatorNavigationState per initiator state token and initiator
+  // document token pair. See InitiatorNavigationStateImpl for more details on
+  // the lifetime and ownership of InitiatorNavigationStates.
+  // We keep a map of initiator state token and initiator document token to
+  // InitiatorNavigationStates in BrowserContextImpl because the
+  // InitiatorNavigationState may outlive the RenderFrameHostImpl that created
+  // it, and may still need to be looked up after the RFHI destruction.
+  // Note: This member must be above `keep_alive_handles_receiver_set_`. During
+  // destruction, NavigationStateKeepAlives get removed from the receiver set.
+  // This may trigger the deletion of the InitiatorNavigationStates they had a
+  // reference on. When that happens, the InitiatorNavigationState will remove
+  // itself from `initiator_navigation_state_map_`, so this map must still be
+  // alive when that happens.
+  using TokenInitiatorNavigationStateMap = absl::flat_hash_map<
+      std::pair<blink::DocumentToken, blink::InitiatorStateToken>,
+      InitiatorNavigationState*>;
+  TokenInitiatorNavigationStateMap initiator_navigation_state_map_;
+
+  // Active keepalive handles for in-flight navigations. They are retained
+  // on `BrowserContextImpl` because, by design, they may need to outlive the
+  // `RenderFrameHostImpl` that initiated the navigation, but shouldn't be used
+  // in a different BrowserContext.
+  // Note that this set may contain in-flight navigations for different
+  // RenderFrameHosts, and furthermore, there may even be multiple in-flight
+  // navigations for a single RenderFrameHost. It is also possible that several
+  // of the NavigationStateKeepAliveHandles reference the same
+  // InitiatorNavigationState. This is in fact the likeliest option in the case
+  // of multiple navigations in the same RenderFrameHost.
+  mojo::UniqueReceiverSet<blink::mojom::NavigationStateKeepAliveHandle>
+      keep_alive_handles_receiver_set_;
+
+  // TODO: crbug.com/40169693 - BrowserContext and BrowserContextImpl both have
+  // WeakPtrFactories. Remove one once the inheritance is sorted out.
+  base::WeakPtrFactory<BrowserContextImpl> weak_factory_{this};
 };
 
 }  // namespace content

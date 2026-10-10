@@ -23,9 +23,11 @@
 #include "third_party/blink/renderer/core/frame/visual_viewport.h"
 #include "third_party/blink/renderer/core/html/forms/html_form_control_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_form_element.h"
+#include "third_party/blink/renderer/core/html/html_area_element.h"
 #include "third_party/blink/renderer/core/html/html_body_element.h"
 #include "third_party/blink/renderer/core/html/html_frame_owner_element.h"
 #include "third_party/blink/renderer/core/html/html_html_element.h"
+#include "third_party/blink/renderer/core/html/html_image_element.h"
 #include "third_party/blink/renderer/core/html/media/html_video_element.h"
 #include "third_party/blink/renderer/core/input/event_handler.h"
 #include "third_party/blink/renderer/core/layout/hit_test_location.h"
@@ -35,6 +37,7 @@
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/page/spatial_navigation.h"
 #include "third_party/blink/renderer/core/scroll/scroll_into_view_util.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -179,7 +182,7 @@ bool SpatialNavigationController::HandleArrowKeyboardEvent(
 
   // If the focus has already moved by a previous handler, return false.
   const Element* focused = GetFocusedElement();
-  if (focused && focused != event->target()) {
+  if (focused && focused != event->RawTarget()) {
     // SpatNav does not need to handle this arrow key because
     // the webpage had a key-handler that already moved focus.
     return false;
@@ -198,20 +201,12 @@ bool SpatialNavigationController::HandleEnterKeyboardEvent(
     return false;
 
   if (event->type() == event_type_names::kKeydown) {
-    enter_key_down_seen_ = true;
     interest_element->SetActive(true);
-  } else if (event->type() == event_type_names::kKeypress) {
-    enter_key_press_seen_ = true;
   } else if (event->type() == event_type_names::kKeyup) {
     interest_element->SetActive(false);
   }
 
   return true;
-}
-
-void SpatialNavigationController::ResetEnterKeyState() {
-  enter_key_down_seen_ = false;
-  enter_key_press_seen_ = false;
 }
 
 bool SpatialNavigationController::HandleImeSubmitKeyboardEvent(
@@ -254,14 +249,14 @@ bool SpatialNavigationController::Advance(
   interest_node->GetDocument().View()->UpdateAllLifecyclePhasesExceptPaint(
       DocumentUpdateReason::kSpatialNavigation);
 
-  Node* container = ScrollableAreaOrDocumentOf(interest_node);
+  Node* container = ScrollableAreaOrDocumentOf(interest_node, direction);
 
   const PhysicalRect visible_rect =
       PhysicalRect::EnclosingRect(page_->GetVisualViewport().VisibleRect());
   const PhysicalRect start_box =
       SearchOrigin(visible_rect, interest_node, direction);
 
-  if (IsScrollableAreaOrDocument(interest_node) &&
+  if (IsScrollableAreaOrDocument(interest_node, direction) &&
       !IsOffscreen(interest_node)) {
     // A visible scroller has interest. Search inside of it from one of its
     // edges.
@@ -283,7 +278,7 @@ bool SpatialNavigationController::Advance(
     // When the scroll container <c> is focused, we move focus back to <a>...
     skipped_tree = container;
     // Nothing found in |container| so search the parent container.
-    container = ScrollableAreaOrDocumentOf(container);
+    container = ScrollableAreaOrDocumentOf(container, direction);
 
     // TODO(bokan): This needs to update the parent document when the _current_
     // container is a document since we're crossing the document boundary.
@@ -307,13 +302,20 @@ FocusCandidate SpatialNavigationController::FindNextCandidateInContainer(
   current_interest.rect_in_root_frame = starting_rect_in_root_frame;
   current_interest.focusable_node = interest_child_in_container;
   current_interest.visible_node = interest_child_in_container;
+  // An <area> has no box of its own; it is rendered by the <img> that uses its
+  // <map>. Use that image as the visible node, like FocusCandidate does.
+  if (auto* area = DynamicTo<HTMLAreaElement>(interest_child_in_container);
+      area && !area->GetLayoutObject() &&
+      RuntimeEnabledFeatures::HTMLAreaElementDisplayNoneEnabled()) {
+    current_interest.visible_node = area->ImageElement();
+  }
 
   FocusCandidate best_candidate, previous_best_candidate;
   double previous_best_distance = kMaxDistance;
   double best_distance = kMaxDistance;
   for (; element;
        element =
-           IsScrollableAreaOrDocument(element)
+           IsScrollableAreaOrDocument(element, direction)
                ? ElementTraversal::NextSkippingChildren(*element, &container)
                : ElementTraversal::Next(*element, &container)) {
     if (element == interest_child_in_container)
@@ -342,7 +344,8 @@ bool SpatialNavigationController::AdvanceWithinContainer(
     const PhysicalRect& starting_rect_in_root_frame,
     SpatialNavigationDirection direction,
     Node* interest_child_in_container) {
-  DCHECK(IsScrollableAreaOrDocument(&container));
+  DCHECK(IsScrollableAreaOrDocument(&container,
+                                    SpatialNavigationDirection::kNone));
 
   FocusCandidate candidate =
       FindNextCandidateInContainer(container, starting_rect_in_root_frame,
@@ -432,8 +435,22 @@ void SpatialNavigationController::DispatchMouseMoveAt(Element* element) {
 
 bool SpatialNavigationController::IsValidCandidate(
     const Element* element) const {
-  if (!element || !element->isConnected() || !element->GetLayoutObject())
+  if (!element || !element->isConnected()) {
     return false;
+  }
+
+  if (!element->GetLayoutObject()) {
+    const auto* area = DynamicTo<HTMLAreaElement>(element);
+    if (!area || !RuntimeEnabledFeatures::HTMLAreaElementDisplayNoneEnabled()) {
+      return false;
+    }
+    // An <area> has no box of its own; it is rendered by the <img> that uses
+    // its <map>, so require that image to be laid out instead.
+    const HTMLImageElement* image = area->ImageElement();
+    if (!image || !image->GetLayoutObject()) {
+      return false;
+    }
+  }
 
   LocalFrame* frame = element->GetDocument().GetFrame();
   if (!frame)
@@ -448,7 +465,7 @@ bool SpatialNavigationController::IsValidCandidate(
       return false;
   }
 
-  return element->IsKeyboardFocusable();
+  return element->IsKeyboardFocusableSlow();
 }
 
 Element* SpatialNavigationController::GetInterestedElement() const {

@@ -13,20 +13,30 @@
 #include "base/functional/callback.h"
 #include "base/supports_user_data.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/policy/core/browser/signin/profile_separation_policies.h"
 #include "components/signin/public/base/signin_metrics.h"
 #include "components/signin/public/identity_manager/primary_account_mutator.h"
 #include "components/signin/public/identity_manager/tribool.h"
-#include "net/cookies/canonical_cookie.h"
+#include "components/sync/base/user_selectable_type.h"
+#include "net/base/schemeful_site.h"
+#include "ui/base/interaction/element_identifier.h"
 
+class GaiaId;
 class Profile;
+class BrowserWindowInterface;
 
 namespace signin {
 class IdentityManager;
 }
 
+namespace syncer {
+class SyncService;
+}
+
 namespace signin_util {
+
+DECLARE_ELEMENT_IDENTIFIER_VALUE(kSigninErrorDialogId);
+DECLARE_ELEMENT_IDENTIFIER_VALUE(kSigninErrorDialogOkButtonId);
 
 enum class ProfileSeparationPolicyState {
   kEnforcedByExistingProfile,
@@ -44,6 +54,23 @@ enum class SignedInState {
   kSignInPending = 3,
   kWebOnlySignedIn = 4,
   kSyncPaused = 5,
+};
+
+// Enum used to indicate if the history sync optin screen
+// should be shown or skipped.
+enum class ShouldShowHistorySyncOptinResult : int {
+  // The screen needs to be shown.
+  kShow = 0,
+  // The screen is skipped because there is no primary account in
+  // error-free state (this includes any SignedInState that is different
+  // from SignedInState::kSignedIn).
+  kSkipUserNotSignedIn = 1,
+  // The screen is skipped because syncing is disabled: this
+  // includes a null Sync service, a service disabled due to policies
+  // or the history sync setting being managed by policies.
+  kSkipSyncForbidden = 2,
+  // The screen is skipped because the user is already opted in.
+  kSkipUserAlreadyOptedIn = 3,
 };
 
 using ProfileSeparationPolicyStateSet =
@@ -64,40 +91,6 @@ class ScopedForceSigninSetterForTesting {
   ScopedForceSigninSetterForTesting& operator=(
       const ScopedForceSigninSetterForTesting&) = delete;
 };
-
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS_ASH)
-// Utility class that moves cookies linked to a URL from one profile to the
-// other. This will be mostly used when a new profile is created after a
-// signin interception of an account linked a SAML signin.
-class CookiesMover {
- public:
-  // Moves cookies related to `url` from `source_profile` to
-  // `destination_profile` and calls `callback` when it is done.
-  CookiesMover(base::WeakPtr<Profile> source_profile,
-               base::WeakPtr<Profile> destination_profile,
-               base::OnceCallback<void()> callback);
-
-  CookiesMover(const CookiesMover& copy) = delete;
-  CookiesMover& operator=(const CookiesMover&) = delete;
-  ~CookiesMover();
-
-  void StartMovingCookies();
-
- private:
-  void OnCookiesReceived(
-      const std::vector<net::CookieWithAccessResult>& included,
-      const std::vector<net::CookieWithAccessResult>& excluded);
-
-  // Called when all the cookies have been moved.
-  void OnCookiesMoved();
-
-  GURL url_;
-  base::WeakPtr<Profile> source_profile_;
-  base::WeakPtr<Profile> destination_profile_;
-  base::OnceCallback<void()> callback_;
-  base::WeakPtrFactory<CookiesMover> weak_pointer_factory_{this};
-};
-#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS_ASH)
 
 // Return whether the force sign in policy is enabled or not.
 // The state of this policy will not be changed without relaunch Chrome.
@@ -125,7 +118,7 @@ bool IsProfileDeletionAllowed(Profile* profile);
 // `intercepted_account_email` is not available, it should always be passed.
 bool IsProfileSeparationEnforcedByProfile(
     Profile* profile,
-    const std::string& intercepted_account_email);
+    std::string_view intercepted_account_email);
 
 // Returns true if profile separation is enforced by
 // `intercepted_account_separation_policies`.
@@ -139,7 +132,7 @@ bool ProfileSeparationAllowsKeepingUnmanagedBrowsingDataInManagedProfile(
         intercepted_profile_separation_policies);
 
 bool IsAccountExemptedFromEnterpriseProfileSeparation(Profile* profile,
-                                                      const std::string& email);
+                                                      std::string_view email);
 #endif  // !BUILDFLAG(IS_CHROMEOS)
 // Records a UMA metric if the user accepts or not to create an enterprise
 // profile.
@@ -155,7 +148,7 @@ void RecordEnterpriseProfileCreationUserChoice(bool enforced_by_policy,
 PrimaryAccountError SetPrimaryAccountWithInvalidToken(
     Profile* profile,
     const std::string& user_email,
-    const std::string& gaia_id,
+    const GaiaId& gaia_id,
     bool is_under_advanced_protection,
     signin_metrics::AccessPoint access_point,
     signin_metrics::SourceForRefreshTokenOperation source);
@@ -167,6 +160,67 @@ bool IsSigninPending(signin::IdentityManager* identity_manager);
 
 // Returns the current state of the primary account that is used in Chrome.
 SignedInState GetSignedInState(const signin::IdentityManager* identity_manager);
+
+// Returns a string representation of `SignedInState`.
+std::string SignedInStateToString(SignedInState state);
+
+// Checks whether syncing the specified `types` is allowed by policy. May need
+// to called again after a sign in to see if policies are set for the account
+// rather than the device. This method does not take into account the feature
+// flag `ReplaceSyncPromosWithSignInPromos`.
+bool IsSyncingUserSelectableTypesAllowedByPolicy(
+    const syncer::SyncService* sync_service,
+    const syncer::UserSelectableTypeSet& types);
+
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+// True if the user has explicitly disabled syncing history, tabs or saved tab
+// groups through the settings. The primary account must be set (this crashes
+// otherwise).
+// This method does not take into account the feature flag
+// `ReplaceSyncPromosWithSignInPromos`.
+bool HasExplicitlyDisabledHistorySync(
+    const syncer::SyncService* sync_service,
+    const signin::IdentityManager* identity_manager);
+
+// Returns the value `ShouldShowHistorySyncOptinResult::kShow`
+// if the necessary conditions to show the History Sync Optin screen
+// are met. Otherwise it returns a skip reason.
+// This method does not take into account the feature flag
+// `ReplaceSyncPromosWithSignInPromos`.
+// TODO(crbug.com/457397173): Consider using also on mobile and moving the
+// method as necessary.
+ShouldShowHistorySyncOptinResult ShouldShowHistorySyncOptinScreen(
+    Profile& profile);
+
+// Enables the types history, tabs, and saved tab groups for the account
+// currently signed into Chrome. If a type cannot be enabled (e.g. by policy),
+// this does not do anything for that type.
+void EnableHistorySync(syncer::SyncService* sync_service);
+
+// Returns true if the history sync optin screen could be offered via the given
+// `access_point`. Returns false if enabling history sync is expected to be done
+// via other means for the given access point and the history sync screen should
+// not be shown.
+bool IsValidAccessPointForHistoryOptinScreen(
+    signin_metrics::AccessPoint access_point);
+
+// The avatar sync promo is only shown to users with specific sign in states.
+// Requires the feature enabling through
+// `switches::IsAvatarSyncPromoFeatureEnabled()`.
+// This function can be deleted once
+// `syncer::kReplaceSyncPromosWithSignInPromos` fully launches.
+bool ShouldShowAvatarSyncPromo(Profile* profile);
+
+// Show a simple error message with an "OK" button to the user, displaying
+// `error_message_id`.
+void ShowErrorDialogWithMessage(BrowserWindowInterface* browser,
+                                int error_message_id);
+
+#endif  // BUILDFLAG(IS_LINUX) ||  BUILDFLAG(IS_MAC) ||  BUILDFLAG(IS_WIN)
+
+// Returns the list of sites that register Device Bound Sessions that
+// are of interest to signin code.
+std::vector<net::SchemefulSite> GetDeviceBoundSessionRestrictedSites();
 
 }  // namespace signin_util
 

@@ -2,14 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <utility>
+
+#include "base/memory/raw_ptr.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
-#include "base/types/cxx23_to_underlying.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/loader/javascript_framework_detection.h"
 #include "third_party/blink/public/mojom/loader/javascript_framework_detection.mojom-shared.h"
 #include "third_party/blink/renderer/core/frame/frame_test_helpers.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/speculation_rules/auto_speculation_rules_test_helper.h"
 #include "third_party/blink/renderer/core/speculation_rules/document_speculation_rules.h"
@@ -55,7 +58,7 @@ class DocumentLoaderAutoSpeculationRulesTest : public ::testing::Test {
   test::TaskEnvironment task_environment_;
   base::test::ScopedFeatureList scoped_feature_list_;
   frame_test_helpers::WebViewHelper web_view_helper_;
-  WebViewImpl* web_view_impl_;
+  raw_ptr<WebViewImpl, UnprotectedInRelease | DanglingUntriaged> web_view_impl_;
 };
 
 enum class OptOutRuleSetType { kInline, kExternal };
@@ -94,8 +97,7 @@ TEST_F(DocumentLoaderAutoSpeculationRulesTest, InvalidJSON) {
   auto& rules = GetDocumentSpeculationRules();
   CHECK_EQ(rules.rule_sets().size(), 0u);
 
-  static_assert(base::to_underlying(mojom::JavaScriptFramework::kVuePress) ==
-                1);
+  static_assert(std::to_underlying(mojom::JavaScriptFramework::kVuePress) == 1);
   GetDocumentLoader().DidObserveJavaScriptFrameworks(
       {{{mojom::JavaScriptFramework::kVuePress, kNoFrameworkVersionDetected}}});
 
@@ -114,8 +116,7 @@ TEST_F(DocumentLoaderAutoSpeculationRulesTest, ValidFrameworkRules) {
   auto& rules = GetDocumentSpeculationRules();
   CHECK_EQ(rules.rule_sets().size(), 0u);
 
-  static_assert(base::to_underlying(mojom::JavaScriptFramework::kVuePress) ==
-                1);
+  static_assert(std::to_underlying(mojom::JavaScriptFramework::kVuePress) == 1);
   GetDocumentLoader().DidObserveJavaScriptFrameworks(
       {{{mojom::JavaScriptFramework::kVuePress, kNoFrameworkVersionDetected}}});
 
@@ -138,9 +139,8 @@ TEST_F(DocumentLoaderAutoSpeculationRulesTest, MultipleFrameworkRules) {
   auto& rules = GetDocumentSpeculationRules();
   CHECK_EQ(rules.rule_sets().size(), 0u);
 
-  static_assert(base::to_underlying(mojom::JavaScriptFramework::kVuePress) ==
-                1);
-  static_assert(base::to_underlying(mojom::JavaScriptFramework::kGatsby) == 3);
+  static_assert(std::to_underlying(mojom::JavaScriptFramework::kVuePress) == 1);
+  static_assert(std::to_underlying(mojom::JavaScriptFramework::kGatsby) == 3);
   GetDocumentLoader().DidObserveJavaScriptFrameworks(
       {{{mojom::JavaScriptFramework::kVuePress, kNoFrameworkVersionDetected},
         {mojom::JavaScriptFramework::kGatsby, kNoFrameworkVersionDetected}}});
@@ -170,8 +170,7 @@ TEST_F(DocumentLoaderAutoSpeculationRulesTest, ValidUrlMatchPatternRules) {
   auto& rules = GetDocumentSpeculationRules();
   CHECK_EQ(rules.rule_sets().size(), 0u);
 
-  static_assert(base::to_underlying(mojom::JavaScriptFramework::kVuePress) ==
-                1);
+  static_assert(std::to_underlying(mojom::JavaScriptFramework::kVuePress) == 1);
   GetDocumentLoader().DidObserveJavaScriptFrameworks(
       {{{mojom::JavaScriptFramework::kVuePress, kNoFrameworkVersionDetected}}});
 
@@ -204,8 +203,7 @@ TEST_P(DocumentLoaderAutoSpeculationRulesOptOutTest, ExistingRuleSetOptsOut) {
 
   base::HistogramTester histogram_tester;
 
-  static_assert(base::to_underlying(mojom::JavaScriptFramework::kVuePress) ==
-                1);
+  static_assert(std::to_underlying(mojom::JavaScriptFramework::kVuePress) == 1);
   GetDocumentLoader().DidObserveJavaScriptFrameworks(
       {{{mojom::JavaScriptFramework::kVuePress, kNoFrameworkVersionDetected}}});
 
@@ -277,9 +275,8 @@ TEST_P(DocumentLoaderAutoSpeculationRulesOptOutTest, AddedLaterRuleSetOptsOut) {
   auto& rules = GetDocumentSpeculationRules();
   CHECK_EQ(rules.rule_sets().size(), 0u);
 
-  static_assert(base::to_underlying(mojom::JavaScriptFramework::kVuePress) ==
-                1);
-  static_assert(base::to_underlying(mojom::JavaScriptFramework::kGatsby) == 3);
+  static_assert(std::to_underlying(mojom::JavaScriptFramework::kVuePress) == 1);
+  static_assert(std::to_underlying(mojom::JavaScriptFramework::kGatsby) == 3);
   GetDocumentLoader().DidObserveJavaScriptFrameworks(
       {{{mojom::JavaScriptFramework::kVuePress, kNoFrameworkVersionDetected},
         {mojom::JavaScriptFramework::kGatsby, kNoFrameworkVersionDetected}}});

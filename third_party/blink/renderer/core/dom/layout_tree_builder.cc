@@ -30,7 +30,6 @@
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/dom/first_letter_pseudo_element.h"
 #include "third_party/blink/renderer/core/dom/node.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/pseudo_element.h"
 #include "third_party/blink/renderer/core/dom/text.h"
 #include "third_party/blink/renderer/core/html_names.h"
@@ -58,10 +57,16 @@ LayoutObject* LayoutTreeBuilderForElement::NextLayoutObject() const {
   if (node_->IsFirstLetterPseudoElement()) {
     return context_.next_sibling;
   }
-  // ::scroll-marker pseudo elements are always attached one after another.
+  // ::scroll-marker pseudo-elements are always attached one after another.
   if (node_->IsScrollMarkerPseudoElement()) {
     return nullptr;
   }
+  // Overscroll areas are the last child within their
+  // ::-internal-overscroll-area-parent.
+  if (style_->IsInternalOverscrollPositionAuto()) {
+    return nullptr;
+  }
+
   if (style_->IsRenderedInTopLayer(*node_)) {
     if (LayoutObject* next_in_top_layer =
             LayoutTreeBuilderTraversal::NextInTopLayer(*node_)) {
@@ -82,14 +87,15 @@ LayoutObject* LayoutTreeBuilderForElement::ParentLayoutObject() const {
     return node_->GetDocument().GetLayoutView();
   }
 #if DCHECK_IS_ON()
-  // Box of ::scroll-marker-group is previous/next sibling of
-  // its originating element, so the parent should be originating element's
-  // parent.
-  if (node_->IsScrollMarkerGroupPseudoElement()) {
-    Element* originating_element =
-        To<PseudoElement>(node_)->UltimateOriginatingElement();
+  // Box of ::scroll-marker-group, ::scroll-button, and ::interest-button is
+  // previous/next sibling of its originating element, so the parent should be
+  // originating element's parent. But not in case of <html> element.
+  if ((node_->IsScrollMarkerGroupPseudoElement() ||
+       node_->IsScrollButtonPseudoElement() ||
+       node_->IsInterestButtonPseudoElement()) &&
+      !node_->parentElement()->IsDocumentElement()) {
     ContainerNode* parent_element =
-        LayoutTreeBuilderTraversal::LayoutParent(*originating_element);
+        LayoutTreeBuilderTraversal::LayoutParent(*node_->parentElement());
     DCHECK_EQ(parent_element->GetLayoutObject(), context_.parent);
   }
 #endif  // DCHECK_IS_ON()
@@ -128,18 +134,19 @@ void LayoutTreeBuilderForElement::CreateLayoutObject() {
     return;
   }
 
-  // Make sure the LayoutObject already knows it is going to be added to a
-  // LayoutFlowThread before we set the style for the first time. Otherwise code
-  // using IsInsideFlowThread() in the StyleWillChange and StyleDidChange will
-  // fail.
-  new_layout_object->SetIsInsideFlowThread(
-      parent_layout_object->IsInsideFlowThread());
+  // Make sure the LayoutObject already knows it's a descendant of a multicol
+  // container before we set the style for the first time. Otherwise code using
+  // IsInsideMulticol() in the StyleWillChange and StyleDidChange will fail.
+  new_layout_object->SetIsInsideMulticol(
+      parent_layout_object->IsInsideMulticol());
 
   LayoutObject* next_layout_object = NextLayoutObject();
   node_->SetLayoutObject(new_layout_object);
 
-  DCHECK(!new_layout_object->Style());
-  new_layout_object->SetStyle(style_);
+#if DCHECK_IS_ON()
+  DCHECK(!new_layout_object->HasStyle());
+#endif
+  new_layout_object->SetStyle(*style_);
 
   parent_layout_object->AddChild(new_layout_object, next_layout_object);
 }
@@ -149,8 +156,9 @@ LayoutTreeBuilderForText::CreateInlineWrapperStyleForDisplayContentsIfNeeded()
     const {
   // If the parent element is not a display:contents element, the style and the
   // parent style will be the same ComputedStyle object. Early out here.
-  if (style_ == context_.parent->Style())
+  if (style_ == &context_.parent->StyleRef()) {
     return nullptr;
+  }
 
   return node_->GetDocument()
       .GetStyleResolver()
@@ -169,8 +177,8 @@ LayoutTreeBuilderForText::CreateInlineWrapperForDisplayContentsIfNeeded(
   // inherited properties because the layout code expects the LayoutObject
   // parent of text nodes to have the same inherited properties.
   LayoutObject* inline_wrapper =
-      LayoutInline::CreateAnonymous(&node_->GetDocument());
-  inline_wrapper->SetStyle(wrapper_style);
+      LayoutInline::CreateAnonymous(node_->GetDocument());
+  inline_wrapper->SetStyle(*wrapper_style);
   if (!context_.parent->IsChildAllowed(inline_wrapper, *wrapper_style)) {
     inline_wrapper->Destroy();
     return nullptr;
@@ -201,16 +209,16 @@ void LayoutTreeBuilderForText::CreateLayoutObject() {
     return;
   }
 
-  // Make sure the LayoutObject already knows it is going to be added to a
-  // LayoutFlowThread before we set the style for the first time. Otherwise code
-  // using IsInsideFlowThread() in the StyleWillChange and StyleDidChange will
-  // fail.
-  new_layout_object->SetIsInsideFlowThread(
-      context_.parent->IsInsideFlowThread());
+  // Make sure the LayoutObject already knows it's a descendant of a multicol
+  // container before we set the style for the first time. Otherwise code using
+  // IsInsideMulticol() in the StyleWillChange and StyleDidChange will fail.
+  new_layout_object->SetIsInsideMulticol(context_.parent->IsInsideMulticol());
 
   node_->SetLayoutObject(new_layout_object);
-  DCHECK(!new_layout_object->Style());
-  new_layout_object->SetStyle(style);
+#if DCHECK_IS_ON()
+  DCHECK(!new_layout_object->HasStyle());
+#endif
+  new_layout_object->SetStyle(*style);
 
   layout_object_parent->AddChild(new_layout_object, next_layout_object);
 }

@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_INTENT_PICKER_TAB_HELPER_H_
 #define CHROME_BROWSER_UI_INTENT_PICKER_TAB_HELPER_H_
 
+#include <optional>
 #include <vector>
 
 #include "base/functional/callback_forward.h"
@@ -12,24 +13,41 @@
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
 #include "chrome/browser/apps/link_capturing/apps_intent_picker_delegate.h"
-#include "chrome/browser/apps/link_capturing/intent_picker_info.h"
 #include "chrome/browser/web_applications/web_app_install_manager.h"
 #include "chrome/browser/web_applications/web_app_install_manager_observer.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
+#include "components/apps/link_capturing/intent_picker_info.h"
+#include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "content/public/browser/web_contents_user_data.h"
 #include "ui/base/models/image_model.h"
+#include "ui/base/unowned_user_data/scoped_unowned_user_data.h"
 #include "url/origin.h"
 
 // Controls the visibility of IntentPickerView by updating the visibility based
-// on stored state. This class is instantiated for both web apps and SWAs.
-class IntentPickerTabHelper
-    : public content::WebContentsObserver,
-      public content::WebContentsUserData<IntentPickerTabHelper>,
-      public web_app::WebAppInstallManagerObserver {
+// on stored state. This class is instantiated for both web apps and SWAs. It
+// is owned by the tab's TabFeatures.
+class IntentPickerTabHelper : public content::WebContentsObserver,
+                              public web_app::WebAppInstallManagerObserver {
  public:
+  using ShowIntentPickerBubbleCallback = base::OnceCallback<void(bool)>;
+
+  DECLARE_USER_DATA(IntentPickerTabHelper);
+
+  // `web_contents` is passed explicitly because during a discard the helper
+  // is recreated for the incoming WebContents before `tab` swaps its
+  // contents.
+  IntentPickerTabHelper(tabs::TabInterface& tab,
+                        content::WebContents* web_contents);
+
   IntentPickerTabHelper(const IntentPickerTabHelper&) = delete;
   IntentPickerTabHelper& operator=(const IntentPickerTabHelper&) = delete;
+
+  static IntentPickerTabHelper* From(tabs::TabInterface* tab);
+
+  // Updates visibility of the intent picker page action based on the current
+  // tab and whether the icon should be showed.
+  void UpdatePageAction(tabs::TabInterface* tab_interface,
+                        bool should_show_icon);
 
   ~IntentPickerTabHelper() override;
 
@@ -39,8 +57,14 @@ class IntentPickerTabHelper
 
   // Shows the intent picker bubble to present a choice between apps to handle
   // |url|. May launch directly into an app based on user preferences and
-  // installed apps.
-  void ShowIntentPickerBubbleOrLaunchApp(const GURL& url);
+  // installed apps. The callback will always be called asynchronously, and is
+  // called with true if the user chooses to launch the app, otherwise, false
+  // is called.
+  void ShowIntentPickerBubbleOrLaunchApp(
+      const GURL& url,
+      bool always_show = false,
+      ShowIntentPickerBubbleCallback callback = base::DoNothing(),
+      std::optional<webapps::AppId> scoped_app_id = std::nullopt);
 
   // Shows or hides the intent picker icon for |web_contents|. Always shows a
   // generic picker icon, even if MaybeShowIconForApps() had previously applied
@@ -65,19 +89,13 @@ class IntentPickerTabHelper
 
   const ui::ImageModel& app_icon() const { return current_app_icon_; }
 
-
   // Sets a OnceClosure callback which will be called next time the icon is
   // updated. If include_latest_navigation is true, and the latest navigation
   // was finished, the callback is called immediately.
   void SetIconUpdateCallbackForTesting(base::OnceClosure callback,
                                        bool include_latest_navigation = false);
 
-  WEB_CONTENTS_USER_DATA_KEY_DECL();
-
  private:
-  explicit IntentPickerTabHelper(content::WebContents* web_contents);
-  friend class content::WebContentsUserData<IntentPickerTabHelper>;
-
   using IntentPickerIconLoaderCallback =
       base::OnceCallback<void(std::vector<apps::IntentPickerAppInfo> apps)>;
 
@@ -104,10 +122,14 @@ class IntentPickerTabHelper
 
   void ShowIntentPickerOrLaunchAppImpl(
       const GURL& url,
+      bool always_show,
+      ShowIntentPickerBubbleCallback callback,
+      std::optional<webapps::AppId> scoped_app_id,
       std::vector<apps::IntentPickerAppInfo> apps);
 
   void OnIntentPickerClosedMaybeLaunch(
       const GURL& url,
+      ShowIntentPickerBubbleCallback callback,
       const std::string& launch_name,
       apps::PickerEntryType entry_type,
       apps::IntentPickerCloseReason close_reason,
@@ -133,10 +155,6 @@ class IntentPickerTabHelper
   // on this origin.
   bool show_expanded_chip_from_usage_ = false;
 
-  // Tracks the number of commits on this page, to allow for checking to make
-  // sure that asynchronous invocations do not cause a stale intent picker.
-  int commit_count_ = 0;
-
   // Contains the app ID of an app which can be opened through the intent
   // picker. This is only set when MaybeShowIconForApps() is called with a
   // single app. Will be set to the empty string in all other cases (e.g. when
@@ -154,6 +172,8 @@ class IntentPickerTabHelper
   base::ScopedObservation<web_app::WebAppInstallManager,
                           web_app::WebAppInstallManagerObserver>
       install_manager_observation_{this};
+
+  ui::ScopedUnownedUserData<IntentPickerTabHelper> scoped_unowned_user_data_;
 
   // This weak ptr factory is invalidated when a new navigation finishes.
   base::WeakPtrFactory<IntentPickerTabHelper> per_navigation_weak_factory_{

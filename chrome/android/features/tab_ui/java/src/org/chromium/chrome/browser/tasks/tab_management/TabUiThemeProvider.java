@@ -9,94 +9,25 @@ import android.content.res.ColorStateList;
 
 import androidx.annotation.ColorInt;
 import androidx.annotation.ColorRes;
-import androidx.appcompat.content.res.AppCompatResources;
 import androidx.core.content.ContextCompat;
 
 import com.google.android.material.color.MaterialColors;
-import com.google.android.material.elevation.ElevationOverlayProvider;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.R;
-import org.chromium.components.browser_ui.styles.ChromeColors;
+import org.chromium.chrome.browser.tasks.tab_management.TabListEditorCoordinator.CreationMode;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 
 /** Utility class that provides theme related attributes for Tab UI. */
+@NullMarked
 public class TabUiThemeProvider {
     private static final String TAG = "TabUiThemeProvider";
 
-    /**
-     * Returns the semantic color value that corresponds to colorPrimaryContainer.
-     *
-     * @param context {@link Context} used to retrieve color.
-     */
-    public static @ColorInt int getDefaultNtbContainerColor(Context context) {
-        return MaterialColors.getColor(context, R.attr.colorPrimaryContainer, TAG);
-    }
-
-    /**
-     * Returns the text color for the number used on the tab group cards based on the incognito
-     * mode.
-     *
-     * @param context {@link Context} used to retrieve color.
-     * @param isIncognito Whether the color is used for incognito mode.
-     * @param isSelected Whether the tab is currently selected.
-     * @return The text color for the number used on the tab group cards.
-     */
-    public static @ColorInt int getTabGroupNumberTextColor(
-            Context context, boolean isIncognito, boolean isSelected) {
-        if (isIncognito) {
-            @ColorRes
-            int colorRes =
-                    isSelected
-                            ? R.color.incognito_tab_tile_number_selected_color
-                            : R.color.incognito_tab_tile_number_color;
-            return context.getColor(colorRes);
-        } else {
-            return isSelected
-                    ? MaterialColors.getColor(context, R.attr.colorOnPrimary, TAG)
-                    : MaterialColors.getColor(context, R.attr.colorOnSurface, TAG);
-        }
-    }
-
-    /**
-     * Returns the {@link ColorStateList} to use for the tab grid card action button based on
-     * incognito mode.
-     *
-     * @param context {@link Context} used to retrieve color.
-     * @param isIncognito Whether the color is used for incognito mode.
-     * @param isSelected Whether the tab is currently selected.
-     * @return The {@link ColorStateList} for tab grid card action button.
-     */
-    public static ColorStateList getActionButtonTintList(
-            Context context, boolean isIncognito, boolean isSelected) {
-        if (isIncognito) {
-            @ColorRes
-            int colorRes =
-                    isSelected
-                            ? R.color.incognito_tab_action_button_selected_color
-                            : R.color.incognito_tab_action_button_color;
-            return AppCompatResources.getColorStateList(context, colorRes);
-        } else {
-            @ColorInt
-            int colorInt =
-                    isSelected
-                            ? MaterialColors.getColor(context, R.attr.colorOnPrimary, TAG)
-                            : MaterialColors.getColor(context, R.attr.colorOnSurfaceVariant, TAG);
-            return ColorStateList.valueOf(colorInt);
-        }
-    }
-
-    /**
-     * Returns the {@link ColorStateList} to use for the selectable tab grid card toggle button
-     * based on incognito mode.
-     *
-     * @param context {@link Context} used to retrieve color.
-     * @param isIncognito Whether the color is used for incognito mode.
-     * @param isSelected Whether the tab is currently selected.
-     * @return The {@link ColorStateList} for selectable tab grid card toggle button.
-     */
-    public static ColorStateList getToggleActionButtonBackgroundTintList(
-            Context context, boolean isIncognito, boolean isSelected) {
-        return getActionButtonTintList(context, isIncognito, isSelected);
+    public static @ColorInt int getGridTabSwitcherBackgroundColor(
+            Context context, boolean isIncognito) {
+        return isIncognito
+                ? ContextCompat.getColor(context, R.color.default_bg_color_dark)
+                : SemanticColorUtils.getDefaultBgColor(context);
     }
 
     /**
@@ -110,39 +41,9 @@ public class TabUiThemeProvider {
     public static ColorStateList getToggleActionButtonCheckedDrawableTintList(
             Context context, boolean isIncognito) {
         if (isIncognito) {
-            return AppCompatResources.getColorStateList(
-                    context, R.color.incognito_tab_bg_selected_color);
+            return context.getColorStateList(R.color.incognito_tab_bg_selected_color);
         }
-        return ColorStateList.valueOf(
-                MaterialColors.getColor(context, org.chromium.chrome.R.attr.colorPrimary, TAG));
-    }
-
-    /**
-     * Returns the mini-thumbnail frame color for the multi-thumbnail tab grid card based on the
-     * incognito mode.
-     *
-     * @param context {@link Context} used to retrieve color.
-     * @param isIncognito Whether the color is used for incognito mode.
-     * @return The mini-thumbnail frame color.
-     */
-    public static @ColorInt int getMiniThumbnailFrameColor(Context context, boolean isIncognito) {
-        return isIncognito
-                ? context.getColor(R.color.tab_grid_card_divider_tint_color_incognito)
-                : SemanticColorUtils.getTabGridCardDividerTintColor(context);
-    }
-
-    /**
-     * Returns the favicon background color based on the incognito mode.
-     *
-     * @param context {@link Context} used to retrieve color.
-     * @param isIncognito Whether the color is used for incognito mode.
-     * @return The favicon background color.
-     */
-    public static @ColorInt int getFaviconBackgroundColor(Context context, boolean isIncognito) {
-        return context.getColor(
-                isIncognito
-                        ? R.color.favicon_background_color_incognito
-                        : R.color.favicon_background_color);
+        return ColorStateList.valueOf(MaterialColors.getColor(context, R.attr.colorPrimary, TAG));
     }
 
     /**
@@ -162,13 +63,11 @@ public class TabUiThemeProvider {
                     isSelected
                             ? R.color.incognito_tab_group_hovered_bg_selected_color
                             : R.color.incognito_tab_group_hovered_bg_color;
-            return AppCompatResources.getColorStateList(context, colorRes);
+            return context.getColorStateList(colorRes);
         } else {
             if (isSelected) {
                 @ColorInt
-                int baseColor =
-                        MaterialColors.getColor(
-                                context, org.chromium.chrome.R.attr.colorPrimary, TAG);
+                int baseColor = MaterialColors.getColor(context, R.attr.colorPrimary, TAG);
                 int alpha =
                         context.getResources()
                                 .getInteger(
@@ -177,12 +76,8 @@ public class TabUiThemeProvider {
                 return ColorStateList.valueOf(
                         MaterialColors.compositeARGBWithAlpha(baseColor, alpha));
             } else {
-                float backgroundElevation =
-                        context.getResources().getDimension(R.dimen.default_elevation_4);
-                @ColorInt
-                int baseColor =
-                        new ElevationOverlayProvider(context)
-                                .compositeOverlayWithThemeSurfaceColorIfNeeded(backgroundElevation);
+
+                @ColorInt int baseColor = SemanticColorUtils.getColorSurfaceContainerHigh(context);
                 int alpha =
                         context.getResources()
                                 .getInteger(R.integer.tab_grid_hovered_card_background_color_alpha);
@@ -193,34 +88,48 @@ public class TabUiThemeProvider {
     }
 
     /**
+     * Returns the color used for tab selector list background based on the incognito mode and
+     * creation mode.
+     *
+     * @param context {@link Context} used to retrieve color.
+     * @param isIncognito Whether the color is used for incognito mode.
+     * @param creationMode The mode of creation of the tab selector list.
+     * @return The background color.
+     */
+    public static @ColorInt int getTabGroupDialogBackgroundColor(
+            Context context, boolean isIncognito, @CreationMode int creationMode) {
+        if (creationMode == CreationMode.DIALOG) {
+            return getTabGroupDialogBackgroundColor(context, isIncognito);
+        } else {
+            return getGridTabSwitcherBackgroundColor(context, isIncognito);
+        }
+    }
+
+    /**
      * Returns the color used for tab grid dialog background based on the incognito mode.
      *
      * @param context {@link Context} used to retrieve color.
      * @param isIncognito Whether the color is used for incognito mode.
      * @return The background color for tab grid dialog.
      */
-    public static @ColorInt int getTabGridDialogBackgroundColor(
+    public static @ColorInt int getTabGroupDialogBackgroundColor(
             Context context, boolean isIncognito) {
         if (isIncognito) {
-            return context.getColor(R.color.incognito_tab_grid_dialog_background_color);
+            return context.getColor(R.color.gm3_baseline_surface_container_dark);
         } else {
-            return MaterialColors.getColor(context, R.attr.colorSurface, TAG);
+            return ContextCompat.getColor(context, R.color.tab_group_dialog_bg_color);
         }
     }
 
     private static @ColorInt int getTabGridDialogUngroupBarBackgroundColor(
             Context context, boolean isIncognito, boolean isTabHovered) {
-        if (isIncognito) {
-            return context.getColor(
-                    isTabHovered
-                            ? R.color.incognito_tab_grid_dialog_ungroup_bar_bg_hovered_color
-                            : R.color.incognito_tab_grid_dialog_background_color);
-        } else {
-            return MaterialColors.getColor(
-                    context,
-                    isTabHovered ? org.chromium.chrome.R.attr.colorPrimary : R.attr.colorSurface,
-                    TAG);
+        if (isTabHovered) {
+            return isIncognito
+                    ? context.getColor(
+                            R.color.incognito_tab_grid_dialog_ungroup_bar_bg_hovered_color)
+                    : SemanticColorUtils.getColorPrimary(context);
         }
+        return getTabGroupDialogBackgroundColor(context, isIncognito);
     }
 
     private static @ColorInt int getTabGridDialogUngroupBarTextColor(
@@ -232,9 +141,7 @@ public class TabUiThemeProvider {
                             : R.color.incognito_tab_grid_dialog_ungroup_bar_text_color);
         } else {
             return MaterialColors.getColor(
-                    context,
-                    isTabHovered ? R.attr.colorOnPrimary : org.chromium.chrome.R.attr.colorPrimary,
-                    TAG);
+                    context, isTabHovered ? R.attr.colorOnPrimary : R.attr.colorPrimary, TAG);
         }
     }
 
@@ -288,32 +195,47 @@ public class TabUiThemeProvider {
     }
 
     /**
-     * Returns the {@link ColorStateList} to use for the strip tab hover card based on the incognito
-     * mode.
+     * Returns the {@link ColorStateList} to use for the tab hover card based on the incognito mode.
      *
      * @param context {@link Context} used to retrieve color.
      * @param isIncognito Whether the color is used for incognito mode.
-     * @return The {@link ColorStateList} for the strip tab hover card.
+     * @return The {@link ColorStateList} for the tab hover card.
      */
-    public static ColorStateList getStripTabHoverCardBackgroundTintList(
+    public static ColorStateList getTabHoverCardBackgroundTintList(
             Context context, boolean isIncognito) {
         int backgroundTint =
                 isIncognito
-                        ? ContextCompat.getColor(
-                                context, R.color.default_bg_color_dark_elev_5_baseline)
-                        : ChromeColors.getSurfaceColor(
-                                context, R.dimen.tab_hover_card_bg_color_elev);
+                        ? ContextCompat.getColor(context, R.color.incognito_tab_hover_card_bg_color)
+                        : ContextCompat.getColor(context, R.color.tab_hover_card_bg_color);
         return ColorStateList.valueOf(backgroundTint);
     }
 
     /**
-     * Returns the text color for the strip tab hover card title based on the incognito mode.
+     * Returns the {@link ColorStateList} to use for tab card highlighting based on the incognito
+     * mode.
      *
      * @param context {@link Context} used to retrieve color.
      * @param isIncognito Whether the color is used for incognito mode.
-     * @return The text color for the strip tab hover card title.
+     * @return The {@link ColorStateList} for the tab card highlight.
      */
-    public static @ColorInt int getStripTabHoverCardTextColorPrimary(
+    public static ColorStateList getTabCardHighlightBackgroundTintList(
+            Context context, boolean isIncognito) {
+        int backgroundTint =
+                isIncognito
+                        ? ContextCompat.getColor(
+                                context, R.color.incognito_tab_highlight_card_bg_color)
+                        : ContextCompat.getColor(context, R.color.tab_highlight_card_bg_color);
+        return ColorStateList.valueOf(backgroundTint);
+    }
+
+    /**
+     * Returns the text color for the tab hover card title based on the incognito mode.
+     *
+     * @param context {@link Context} used to retrieve color.
+     * @param isIncognito Whether the color is used for incognito mode.
+     * @return The text color for the tab hover card title.
+     */
+    public static @ColorInt int getTabHoverCardTextColorPrimary(
             Context context, boolean isIncognito) {
         return isIncognito
                 ? context.getColor(R.color.default_text_color_light)
@@ -321,13 +243,13 @@ public class TabUiThemeProvider {
     }
 
     /**
-     * Returns the text color for the strip tab hover card URL based on the incognito mode.
+     * Returns the text color for the tab hover card URL based on the incognito mode.
      *
      * @param context {@link Context} used to retrieve color.
      * @param isIncognito Whether the color is used for incognito mode.
-     * @return The text color for the strip tab hover card URL.
+     * @return The text color for the tab hover card URL.
      */
-    public static @ColorInt int getStripTabHoverCardTextColorSecondary(
+    public static @ColorInt int getTabHoverCardTextColorSecondary(
             Context context, boolean isIncognito) {
         return isIncognito
                 ? context.getColor(R.color.default_text_color_secondary_light)
@@ -339,15 +261,15 @@ public class TabUiThemeProvider {
      *
      * @param context {@link Context} used to retrieve color.
      * @param isIncognito Whether the color is used for incognito mode.
+     * @param creationMode The mode of creation of the tab selector list.
      * @return The background color for the toolbar when tab switcher is in selection edit mode.
      */
     public static @ColorInt int getTabSelectionToolbarBackground(
-            Context context, boolean isIncognito) {
-        if (isIncognito) {
-            return context.getColor(R.color.incognito_tab_list_editor_toolbar_bg_color);
-        } else {
-            return MaterialColors.getColor(context, R.attr.colorSurface, TAG);
+            Context context, boolean isIncognito, @CreationMode int creationMode) {
+        if (creationMode == CreationMode.DIALOG) {
+            return getTabGroupDialogBackgroundColor(context, isIncognito);
         }
+        return getGridTabSwitcherBackgroundColor(context, isIncognito);
     }
 
     /**
@@ -356,12 +278,11 @@ public class TabUiThemeProvider {
      * @param context {@link Context} used to retrieve color.
      * @param isIncognito Whether the color is used for incognito mode.
      * @return The {@link ColorStateList} for icons on the toolbar when tab switcher is in selection
-     *         edit mode.
+     *     edit mode.
      */
     public static ColorStateList getTabSelectionToolbarIconTintList(
             Context context, boolean isIncognito) {
-        return AppCompatResources.getColorStateList(
-                context,
+        return context.getColorStateList(
                 isIncognito
                         ? R.color.default_text_color_light_list
                         : R.color.default_text_color_list);
@@ -374,7 +295,9 @@ public class TabUiThemeProvider {
      * @return The background resource id for message card view.
      */
     public static int getMessageCardBackgroundResourceId(boolean isIncognito) {
-        return isIncognito ? R.drawable.incognito_card_bg : R.drawable.card_with_corners_background;
+        return isIncognito
+                ? R.drawable.card_background_corners_16dp_baseline_dark
+                : R.drawable.card_background_corners_16dp;
     }
 
     /**
@@ -410,7 +333,7 @@ public class TabUiThemeProvider {
     public static int getMessageCardActionButtonTextAppearance(boolean isIncognito) {
         return isIncognito
                 ? R.style.TextAppearance_Button_Text_Blue_Dark
-                : R.style.TextAppearance_Button_Text_Blue;
+                : R.style.TextAppearance_ClickableButtonInverse;
     }
 
     /**
@@ -492,30 +415,10 @@ public class TabUiThemeProvider {
      */
     public static ColorStateList getMessageCardCloseButtonTintList(
             Context context, boolean isIncognito) {
-        return AppCompatResources.getColorStateList(
-                context,
+        return context.getColorStateList(
                 isIncognito
                         ? R.color.default_icon_color_light
                         : R.color.default_icon_color_tint_list);
-    }
-
-    /**
-     * Return the size represented by dimension for padding between tab cards.
-     *
-     * @param context {@link Context} to retrieve dimension.
-     * @return The padding between tab cards in float number.
-     */
-    public static float getTabCardPaddingDimension(Context context) {
-        return context.getResources().getDimension(R.dimen.tab_grid_card_between_card_padding);
-    }
-
-    /**
-     * Return the space represented by dimension for spaces between mini thumbnails in a group tab.
-     * @param context {@link Context} to retrieve dimension.
-     * @return The padding between between mini thumbnails in float number.
-     */
-    public static float getTabMiniThumbnailPaddingDimension(Context context) {
-        return context.getResources().getDimension(R.dimen.tab_grid_card_thumbnail_margin);
     }
 
     /**
@@ -530,11 +433,75 @@ public class TabUiThemeProvider {
     }
 
     /**
-     * Return the size represented by dimension for margin around message cards.
-     * @param context {@link Context} to retrieve dimension.
-     * @return The margin around message cards in float number.
+     * Returns the color used for the shared tab notification bubble.
+     *
+     * @param context {@link Context} used to retrieve color.
+     * @return The color for the tab notification bubble.
      */
-    public static float getMessageCardMarginDimension(Context context) {
-        return context.getResources().getDimension(R.dimen.tab_list_selected_inset);
+    public static @ColorInt int getTabBubbleFillColor(Context context) {
+        return MaterialColors.getColor(context, R.attr.colorPrimary, TAG);
+    }
+
+    /**
+     * Get the background fill color used for the tab group cluster quarter.
+     *
+     * @param context {@link Context} used to retrieve color.
+     * @param showFavicon Whether the quarter is showing a favicon.
+     * @param enableContainment Whether the tile is shown in the containment list.
+     * @return The color for the tab group favicon quarter.
+     */
+    public static @ColorInt int getTabGroupFaviconQuarterFillColor(
+            Context context, boolean showFavicon, boolean enableContainment) {
+        if (enableContainment) {
+            return showFavicon
+                    ? SemanticColorUtils.getColorSurfaceContainer(context)
+                    : SemanticColorUtils.getColorSurfaceContainerLow(context);
+        }
+        return showFavicon
+                ? SemanticColorUtils.getColorSurfaceBright(context)
+                : ContextCompat.getColor(
+                        context, R.color.tab_group_favicon_quater_empty_fill_color);
+    }
+
+    /**
+     * Get the background color tint for the tab group cluster background.
+     *
+     * @param context {@link Context} used to retrieve color.
+     * @param enableContainment Whether the cluster row is shown in the containment list.
+     * @return The color for the tab group favicon quarter.
+     */
+    public static @ColorInt int getTabGroupClusterBackgroundTint(
+            Context context, boolean enableContainment) {
+        return enableContainment
+                ? SemanticColorUtils.getColorSurfaceBright(context)
+                : SemanticColorUtils.getColorSurfaceContainer(context);
+    }
+
+    /**
+     * Returns the color used by dialogs as background.
+     *
+     * @param context {@link Context} used to retrieve color.
+     * @param isIncognito Whether the color is used for incognito mode.
+     * @return The color for the dialog background.
+     */
+    public static @ColorInt int getColorPickerDialogBackgroundColor(
+            Context context, boolean isIncognito) {
+        return isIncognito
+                ? ContextCompat.getColor(
+                        context, R.color.tab_group_color_picker_selection_bg_incognito)
+                : SemanticColorUtils.getDialogBgColor(context);
+    }
+
+    /**
+     * Returns the color used for the tab switcher pane hairline.
+     *
+     * @param context {@link Context} used to retrieve color.
+     * @param isIncognito Whether the color is used for incognito mode.
+     * @return The color for the pane hairline.
+     */
+    public static @ColorInt int getPaneHairlineColor(Context context, boolean isIncognito) {
+        return isIncognito
+                ? ContextCompat.getColor(context, R.color.divider_color_light)
+                : SemanticColorUtils.getDividerColor(context);
     }
 }

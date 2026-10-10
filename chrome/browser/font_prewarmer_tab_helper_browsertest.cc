@@ -10,9 +10,8 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/search_engines/ui_thread_search_terms_data.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_navigator.h"
-#include "chrome/browser/ui/browser_navigator_params.h"
+#include "chrome/browser/ui/navigator/browser_navigator.h"
+#include "chrome/browser/ui/navigator/browser_navigator_params.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/google/core/common/google_switches.h"
 #include "components/prefs/pref_change_registrar.h"
@@ -25,6 +24,7 @@
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/controllable_http_response.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 
 class FontPrewarmerTabHelperTest : public InProcessBrowserTest {
@@ -32,7 +32,7 @@ class FontPrewarmerTabHelperTest : public InProcessBrowserTest {
   TemplateURLService* LoadTemplateUrlService() {
     TemplateURLService* service =
         TemplateURLServiceFactory::GetInstance()->GetForProfile(
-            browser()->profile());
+            browser()->GetProfile());
     if (service->loaded())
       return service;
     base::RunLoop run_loop;
@@ -79,7 +79,7 @@ class FontPrewarmerTabHelperTest : public InProcessBrowserTest {
   }
 
   std::vector<std::string> GetFontNames() {
-    return FontPrewarmerTabHelper::GetFontNames(browser()->profile());
+    return FontPrewarmerTabHelper::GetFontNames(browser()->GetProfile());
   }
 
   std::unique_ptr<net::test_server::HttpResponse> OnHandleRequest(
@@ -106,7 +106,7 @@ IN_PROC_BROWSER_TEST_F(FontPrewarmerTabHelperTest, Basic) {
                         ui::PAGE_TRANSITION_LINK);
   base::RunLoop run_loop;
   PrefChangeRegistrar prefs_registrar;
-  prefs_registrar.Init(browser()->profile()->GetPrefs());
+  prefs_registrar.Init(browser()->GetProfile()->GetPrefs());
   prefs_registrar.Add(GetSearchResultsPageFontsPref(),
                       base::BindLambdaForTesting([&]() { run_loop.Quit(); }));
   Navigate(&params);

@@ -32,23 +32,30 @@ BoxModelObjectPainter::BoxModelObjectPainter(const LayoutBoxModelObject& box)
     : BoxPainterBase(box.GetDocument(), box.StyleRef(), GetNode(box)),
       box_model_(box) {}
 
+Node* BoxModelObjectPainter::ImageGeneratingNode() const {
+  return box_model_.GeneratingNode();
+}
+
 PhysicalRect BoxModelObjectPainter::AdjustRectForScrolledContent(
     GraphicsContext& context,
     const PhysicalBoxStrut& border,
     const PhysicalRect& rect) const {
   // Clip to the overflow area.
-  // TODO(chrishtr): this should be pixel-snapped.
+  // TODO(crbug.com/539155974): Properly snap to pixels.
   const auto& this_box = To<LayoutBox>(box_model_);
-  context.Clip(gfx::RectF(this_box.OverflowClipRect(rect.offset)));
+  PhysicalRect clip_rect = this_box.OverflowClipRect();
+  clip_rect.Move(rect.offset);
+  context.Clip(gfx::RectF(clip_rect));
 
   // Adjust the paint rect to reflect a scrolled content box with borders at
   // the ends.
   PhysicalRect scrolled_paint_rect = rect;
   scrolled_paint_rect.offset -=
-      PhysicalOffset(this_box.PixelSnappedScrolledContentOffset());
+      PhysicalOffset(this_box.GetScrollableArea()->PixelSnappedScrollOffset());
   scrolled_paint_rect.SetWidth(border.HorizontalSum() + this_box.ScrollWidth());
-  scrolled_paint_rect.SetHeight(this_box.BorderTop() + this_box.ScrollHeight() +
-                                this_box.BorderBottom());
+  // FIXME: Why isn't this using the provided pixel snapped borders?
+  scrolled_paint_rect.SetHeight(this_box.BorderOutsets().VerticalSum() +
+                                this_box.ScrollHeight());
   return scrolled_paint_rect;
 }
 
@@ -56,12 +63,13 @@ BoxPainterBase::FillLayerInfo BoxModelObjectPainter::GetFillLayerInfo(
     const Color& color,
     const FillLayer& bg_layer,
     BackgroundBleedAvoidance bleed_avoidance,
-    bool is_painting_background_in_contents_space) const {
+    bool is_painting_background_in_contents_space,
+    PaintFlags paint_flags) const {
   return BoxPainterBase::FillLayerInfo(
       box_model_.GetDocument(), box_model_.StyleRef(),
       box_model_.IsScrollContainer(), color, bg_layer, bleed_avoidance,
       PhysicalBoxSides(), box_model_.IsLayoutInline(),
-      is_painting_background_in_contents_space);
+      is_painting_background_in_contents_space, paint_flags);
 }
 
 }  // namespace blink

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "content/browser/feature_observer.h"
 
 #include "content/public/browser/content_browser_client.h"
@@ -18,7 +13,7 @@ namespace content {
 FeatureObserver::FeatureObserver(FeatureObserverClient* client,
                                  GlobalRenderFrameHostId id)
     : client_(client), id_(id) {
-  DCHECK(client_);
+  CHECK(client_, base::NotFatalUntil::M158);
 
   for (size_t i = 0;
        i <= static_cast<size_t>(blink::mojom::ObservedFeatureType::kMaxValue);
@@ -27,8 +22,9 @@ FeatureObserver::FeatureObserver(FeatureObserverClient* client,
         [](mojo::ReceiverSet<blink::mojom::ObservedFeature>* set,
            FeatureObserverClient* client, GlobalRenderFrameHostId id,
            blink::mojom::ObservedFeatureType type) {
-          if (!set->empty())
+          if (!set->empty()) {
             return;
+          }
 
           // Notify if this is the last receiver.
           client->OnStopUsing(id, type);
@@ -48,7 +44,7 @@ void FeatureObserver::GetFeatureObserver(
 void FeatureObserver::Register(
     mojo::PendingReceiver<blink::mojom::ObservedFeature> feature,
     blink::mojom::ObservedFeatureType type) {
-  DCHECK(client_);
+  CHECK(client_, base::NotFatalUntil::M158);
 
   auto& set = features_by_type_[static_cast<int>(type)];
 

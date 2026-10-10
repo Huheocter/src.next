@@ -8,7 +8,6 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_value.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
-#include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -24,10 +23,7 @@ class CORE_EXPORT CSSStringValue : public CSSValue {
   bool Equals(const CSSStringValue& other) const {
     return string_ == other.string_;
   }
-  unsigned CustomHash() const { return string_.Impl()->GetHash(); }
-
-  const CSSValue* TaintedCopy() const;
-  const CSSValue* UntaintedCopy() const;
+  uint32_t CustomHash() const { return string_.Impl()->GetHash(); }
 
   void TraceAfterDispatch(blink::Visitor*) const;
 

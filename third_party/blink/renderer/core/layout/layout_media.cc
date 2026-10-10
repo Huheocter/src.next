@@ -26,7 +26,6 @@
 #include "third_party/blink/renderer/core/layout/layout_media.h"
 
 #include "third_party/blink/public/mojom/scroll/scrollbar_mode.mojom-blink.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/visual_viewport.h"
@@ -143,11 +142,11 @@ LayoutUnit LayoutMedia::ComputePanelWidth(
   // The bottom left corner of the video.
   const gfx::PointF bottom_left_point(
       LocalToAbsolutePoint(gfx::PointF(media_rect.X(), media_rect.Bottom()),
-                           kTraverseDocumentBoundaries));
+                           {MapCoordinatesMode::kTraverseDocumentBoundaries}));
   // The bottom right corner of the video.
   const gfx::PointF bottom_right_point(
       LocalToAbsolutePoint(gfx::PointF(media_rect.Right(), media_rect.Bottom()),
-                           kTraverseDocumentBoundaries));
+                           {MapCoordinatesMode::kTraverseDocumentBoundaries}));
 
   const bool bottom_left_corner_visible = bottom_left_point.x() < visible_width;
   const bool bottom_right_corner_visible =
@@ -188,6 +187,7 @@ LayoutUnit LayoutMedia::ComputePanelWidth(
 }
 
 RecalcScrollableOverflowResult LayoutMedia::RecalcScrollableOverflow() {
+  NOT_DESTROYED();
   return RecalcScrollableOverflowNG();
 }
 

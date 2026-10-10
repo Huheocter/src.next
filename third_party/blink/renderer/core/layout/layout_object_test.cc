@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 
 #include "testing/gmock/include/gmock/gmock-matchers.h"
@@ -20,6 +15,8 @@
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/html/html_frame_owner_element.h"
 #include "third_party/blink/renderer/core/html/html_style_element.h"
+#include "third_party/blink/renderer/core/layout/geometry/axis.h"
+#include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 #include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_text_fragment.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
@@ -30,6 +27,7 @@
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/json/json_values.h"
+#include "third_party/skia/include/docs/SkPDFDocument.h"
 #include "ui/gfx/geometry/decomposed_transform.h"
 
 namespace blink {
@@ -40,7 +38,7 @@ using testing::MatchesRegex;
 class LayoutObjectTest : public RenderingTest {
  public:
   LayoutObjectTest()
-      : RenderingTest(MakeGarbageCollected<EmptyLocalFrameClient>()) {}
+      : RenderingTest(MakeGarbageCollected<SingleChildLocalFrameClient>()) {}
 
  protected:
   template <bool should_have_wrapper>
@@ -87,6 +85,7 @@ TEST_F(LayoutObjectTest, CommonAncestor) {
       </div>
     </div>
   )HTML");
+
   LayoutObject* container = GetLayoutObjectByElementId("container");
   LayoutObject* child1 = GetLayoutObjectByElementId("child1");
   LayoutObject* child1_1 = GetLayoutObjectByElementId("child1_1");
@@ -110,11 +109,50 @@ TEST_F(LayoutObjectTest, CommonAncestor) {
   EXPECT_EQ(child2_1->CommonAncestor(*child1_1), container);
   EXPECT_TRUE(child1_1->IsBeforeInPreOrder(*child2_1));
   EXPECT_FALSE(child2_1->IsBeforeInPreOrder(*child1_1));
-
   EXPECT_EQ(child1_1->CommonAncestor(*child2_1_1), container);
   EXPECT_EQ(child2_1_1->CommonAncestor(*child1_1), container);
   EXPECT_TRUE(child1_1->IsBeforeInPreOrder(*child2_1_1));
   EXPECT_FALSE(child2_1_1->IsBeforeInPreOrder(*child1_1));
+
+  // Perform the same set of tests as before, but now using the index-cache.
+  LayoutObject::IndexCache index_cache;
+  EXPECT_TRUE(child1->IsBeforeInPreOrder(*child2, &index_cache));
+  EXPECT_FALSE(child2->IsBeforeInPreOrder(*child1, &index_cache));
+  EXPECT_TRUE(child1->IsBeforeInPreOrder(*child1_1, &index_cache));
+  EXPECT_FALSE(child1_1->IsBeforeInPreOrder(*child1, &index_cache));
+  EXPECT_TRUE(child1_1->IsBeforeInPreOrder(*child2_1, &index_cache));
+  EXPECT_FALSE(child2_1->IsBeforeInPreOrder(*child1_1, &index_cache));
+  EXPECT_TRUE(child1_1->IsBeforeInPreOrder(*child2_1_1, &index_cache));
+  EXPECT_FALSE(child2_1_1->IsBeforeInPreOrder(*child1_1, &index_cache));
+}
+
+TEST_F(LayoutObjectTest, OwnerNodeId) {
+  SetBodyInnerHTML(R"HTML(
+    <div id="root">
+      <div id="-internal-print-header"></div>
+      <div id="-internal-print-footer"></div>
+      <div id="-internal-print-page-number"></div>
+    </div>
+  )HTML");
+  DisplayItemClient* root = GetLayoutObjectByElementId("root");
+  DisplayItemClient* header =
+      static_cast<LayoutObject*>(root)->SlowFirstChild();
+  DisplayItemClient* footer = static_cast<LayoutObject*>(header)->NextSibling();
+  DisplayItemClient* page_number =
+      static_cast<LayoutObject*>(footer)->NextSibling();
+
+  const DOMNodeId root_node_id = DOMNodeIds::IdForNode(GetElementById("root"));
+  EXPECT_EQ(root_node_id, root->OwnerNodeId(true));
+  EXPECT_EQ(root_node_id, root->OwnerNodeId(false));
+
+  EXPECT_EQ(SkPDF::NodeID::PaginationHeaderArtifact, header->OwnerNodeId(true));
+  EXPECT_EQ(root_node_id + 1, header->OwnerNodeId(false));
+
+  EXPECT_EQ(SkPDF::NodeID::PaginationFooterArtifact, footer->OwnerNodeId(true));
+  EXPECT_EQ(root_node_id + 2, footer->OwnerNodeId(false));
+
+  EXPECT_EQ(SkPDF::NodeID::PaginationArtifact, page_number->OwnerNodeId(true));
+  EXPECT_EQ(root_node_id + 3, page_number->OwnerNodeId(false));
 }
 
 TEST_F(LayoutObjectTest, LayoutDecoratedNameCalledWithPositionedObject) {
@@ -569,7 +607,7 @@ TEST_F(LayoutObjectTest, MutableForPaintingClearPaintFlags) {
   object->SetNeedsPaintPropertyUpdate();
   EXPECT_TRUE(object->NeedsPaintPropertyUpdate());
   EXPECT_TRUE(object->Parent()->DescendantNeedsPaintPropertyUpdate());
-  object->bitfields_.SetDescendantNeedsPaintPropertyUpdate(true);
+  object->descendant_needs_paint_property_update_ = true;
   EXPECT_TRUE(object->DescendantNeedsPaintPropertyUpdate());
 
   GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kInPrePaint);
@@ -960,7 +998,7 @@ TEST_F(LayoutObjectTest, DisplayContentsWrapperInTableCell) {
 TEST_F(LayoutObjectTest, DumpLayoutObject) {
   // Test dumping for debugging, in particular that newlines and non-ASCII
   // characters are escaped as expected.
-  SetBodyInnerHTML(String::FromUTF8(R"HTML(
+  SetBodyInnerHTML(String::FromUtf8(R"HTML(
     <div id='block' style='background:
 lime'>
       testing Среќен роденден
@@ -974,7 +1012,7 @@ lime'>
 
   StringBuilder result;
   block->DumpLayoutObject(result, false, 0);
-  EXPECT_THAT(result.ToString().Utf8(),
+  EXPECT_THAT(result.Utf8(),
               MatchesRegex(
                   "LayoutN?G?BlockFlow \\(children-inline\\)\tDIV id=\"block\" "
                   "style=\"background:\\\\nlime\""));
@@ -998,14 +1036,14 @@ TEST_F(LayoutObjectTest, DumpDestroyedLayoutObject) {
   StringBuilder builder;
   layout_object->DumpLayoutObject(builder, false, 0);
   String result = builder.ToString();
-  EXPECT_FALSE(result.StartsWith("[DESTROYED] "));
+  EXPECT_FALSE(result.starts_with("[DESTROYED] "));
 
   element->remove();
   UpdateAllLifecyclePhasesForTest();
   builder.Clear();
   layout_object->DumpLayoutObject(builder, false, 0);
   result = builder.ToString();
-  EXPECT_TRUE(result.StartsWith("[DESTROYED] "));
+  EXPECT_TRUE(result.starts_with("[DESTROYED] "));
 }
 #endif  // DCHECK_IS_ON()
 
@@ -1397,7 +1435,7 @@ TEST_F(LayoutObjectTest, NeedsScrollableOverflowRecalc) {
   EXPECT_FALSE(other->NeedsScrollableOverflowRecalc());
 
   auto* target_element = GetElementById("target");
-  target_element->setInnerHTML("baz");
+  target_element->SetInnerHTMLWithoutTrustedTypes("baz");
   UpdateAllLifecyclePhasesForTest();
 
   EXPECT_FALSE(wrapper->NeedsScrollableOverflowRecalc());
@@ -1483,10 +1521,11 @@ TEST_F(LayoutObjectTest, LocalToAncestoRectIgnoreAncestorScroll) {
   PhysicalRect rect(0, 0, 100, 100);
 
   EXPECT_EQ(PhysicalRect(0, 2000, 100, 100),
-            target->LocalToAncestorRect(rect, ancestor, kIgnoreScrollOffset));
+            target->LocalToAncestorRect(
+                rect, ancestor, {MapCoordinatesMode::kIgnoreScrollOffset}));
 
   EXPECT_EQ(PhysicalRect(0, 1900, 100, 100),
-            target->LocalToAncestorRect(rect, ancestor, 0));
+            target->LocalToAncestorRect(rect, ancestor));
 }
 
 TEST_F(LayoutObjectTest, LocalToAncestoRectViewIgnoreAncestorScroll) {
@@ -1498,16 +1537,18 @@ TEST_F(LayoutObjectTest, LocalToAncestoRectViewIgnoreAncestorScroll) {
 
   LayoutObject* target = GetLayoutObjectByElementId("target");
   GetDocument().View()->LayoutViewport()->SetScrollOffset(
-      ScrollOffset(0, 100), mojom::blink::ScrollType::kProgrammatic);
+      ScrollOffset(0, 100), mojom::blink::ScrollType::kProgrammatic,
+      cc::ScrollSourceType::kNone);
   UpdateAllLifecyclePhasesForTest();
 
   PhysicalRect rect(0, 0, 100, 100);
 
   EXPECT_EQ(PhysicalRect(0, 2000, 100, 100),
-            target->LocalToAncestorRect(rect, nullptr, kIgnoreScrollOffset));
+            target->LocalToAncestorRect(
+                rect, nullptr, {MapCoordinatesMode::kIgnoreScrollOffset}));
 
   EXPECT_EQ(PhysicalRect(0, 1900, 100, 100),
-            target->LocalToAncestorRect(rect, nullptr, 0));
+            target->LocalToAncestorRect(rect, nullptr));
 }
 
 TEST_F(LayoutObjectTest,
@@ -1537,10 +1578,11 @@ TEST_F(LayoutObjectTest,
   PhysicalRect rect(0, 0, 100, 100);
 
   EXPECT_EQ(PhysicalRect(0, 2000, 100, 100),
-            target->LocalToAncestorRect(rect, ancestor, kIgnoreScrollOffset));
+            target->LocalToAncestorRect(
+                rect, ancestor, {MapCoordinatesMode::kIgnoreScrollOffset}));
 
   EXPECT_EQ(PhysicalRect(0, 1800, 100, 100),
-            target->LocalToAncestorRect(rect, ancestor, 0));
+            target->LocalToAncestorRect(rect, ancestor));
 }
 
 TEST_F(LayoutObjectTest,
@@ -1558,7 +1600,8 @@ TEST_F(LayoutObjectTest,
   LayoutBoxModelObject* intermediate =
       To<LayoutBoxModelObject>(GetLayoutObjectByElementId("intermediate"));
   GetDocument().View()->LayoutViewport()->SetScrollOffset(
-      ScrollOffset(0, 100), mojom::blink::ScrollType::kProgrammatic);
+      ScrollOffset(0, 100), mojom::blink::ScrollType::kProgrammatic,
+      cc::ScrollSourceType::kNone);
   intermediate->GetScrollableArea()->ScrollBy(ScrollOffset(0, 100),
                                               mojom::blink::ScrollType::kUser);
   UpdateAllLifecyclePhasesForTest();
@@ -1566,10 +1609,11 @@ TEST_F(LayoutObjectTest,
   PhysicalRect rect(0, 0, 100, 100);
 
   EXPECT_EQ(PhysicalRect(0, 2000, 100, 100),
-            target->LocalToAncestorRect(rect, nullptr, kIgnoreScrollOffset));
+            target->LocalToAncestorRect(
+                rect, nullptr, {MapCoordinatesMode::kIgnoreScrollOffset}));
 
   EXPECT_EQ(PhysicalRect(0, 1800, 100, 100),
-            target->LocalToAncestorRect(rect, nullptr, 0));
+            target->LocalToAncestorRect(rect, nullptr));
 }
 
 // crbug.com/1246619
@@ -1643,13 +1687,13 @@ TEST_F(LayoutObjectTestWithCompositing,
   target->setAttribute(html_names::kStyleAttr,
                        AtomicString(kTransformsWith3D[0]));
   UpdateAllLifecyclePhasesForTest();
-  target->scrollIntoView();
+  target->scrollIntoViewForTesting();
   EXPECT_FALSE(
       GetDocument().IsUseCounted(WebFeature::kDifferentPerspectiveCBOrParent));
 
   target->setAttribute(html_names::kStyleAttr, AtomicString(kPreserve3D));
   UpdateAllLifecyclePhasesForTest();
-  target->scrollIntoView();
+  target->scrollIntoViewForTesting();
   EXPECT_FALSE(
       GetDocument().IsUseCounted(WebFeature::kDifferentPerspectiveCBOrParent));
 
@@ -1672,14 +1716,14 @@ TEST_F(LayoutObjectTestWithCompositing,
   target->setAttribute(html_names::kStyleAttr,
                        AtomicString(kTransformWithout3D));
   UpdateAllLifecyclePhasesForTest();
-  target->scrollIntoView();
+  target->scrollIntoViewForTesting();
   EXPECT_FALSE(
       GetDocument().IsUseCounted(WebFeature::kDifferentPerspectiveCBOrParent));
 
   target->setAttribute(html_names::kStyleAttr,
                        AtomicString(kTransformsWith3D[0]));
   UpdateAllLifecyclePhasesForTest();
-  target->scrollIntoView();
+  target->scrollIntoViewForTesting();
   EXPECT_TRUE(
       GetDocument().IsUseCounted(WebFeature::kDifferentPerspectiveCBOrParent));
   GetDocument().ClearUseCounterForTesting(
@@ -1691,7 +1735,7 @@ TEST_F(LayoutObjectTestWithCompositing,
   target->setAttribute(html_names::kStyleAttr,
                        AtomicString(kTransformsWith3D[1]));
   UpdateAllLifecyclePhasesForTest();
-  target->scrollIntoView();
+  target->scrollIntoViewForTesting();
   EXPECT_TRUE(
       GetDocument().IsUseCounted(WebFeature::kDifferentPerspectiveCBOrParent));
   GetDocument().ClearUseCounterForTesting(
@@ -1699,7 +1743,7 @@ TEST_F(LayoutObjectTestWithCompositing,
 
   target->setAttribute(html_names::kStyleAttr, AtomicString(kPreserve3D));
   UpdateAllLifecyclePhasesForTest();
-  target->scrollIntoView();
+  target->scrollIntoViewForTesting();
   EXPECT_TRUE(
       GetDocument().IsUseCounted(WebFeature::kDifferentPerspectiveCBOrParent));
   GetDocument().ClearUseCounterForTesting(
@@ -1792,6 +1836,25 @@ TEST_F(LayoutObjectTest, ContainingScrollContainer) {
                            ->ContainingScrollContainer());
 }
 
+TEST_F(LayoutObjectTest, ContainingScrollContainerSingleAxis) {
+  SetBodyInnerHTML(R"HTML(
+    <div id="scroller"
+         style="overflow: scroll clip; width: 100px; height: 100px">
+      <div id="child"></div>
+    </div>
+  )HTML");
+
+  const LayoutObject* scroller = GetLayoutObjectByElementId("scroller");
+  const LayoutObject* child = GetLayoutObjectByElementId("child");
+  ASSERT_TRUE(scroller);
+  ASSERT_TRUE(child);
+
+  EXPECT_EQ(scroller,
+            child->ContainingScrollContainer(PhysicalAxis::kHorizontal));
+  EXPECT_EQ(&GetLayoutView(),
+            child->ContainingScrollContainer(PhysicalAxis::kVertical));
+}
+
 TEST_F(LayoutObjectTest, ScrollOffsetMapping) {
   SetBodyInnerHTML(R"HTML(
     <div id="scroller" style="overflow:scroll; width:300px; height:300px;">
@@ -1802,9 +1865,10 @@ TEST_F(LayoutObjectTest, ScrollOffsetMapping) {
 
   Element* scroller = GetElementById("scroller");
   ASSERT_TRUE(scroller);
-  scroller->scrollTo(100, 200);
+  scroller->scrollToForTesting(100, 200);
   GetDocument().View()->LayoutViewport()->SetScrollOffset(
-      ScrollOffset(10, 20), mojom::blink::ScrollType::kProgrammatic);
+      ScrollOffset(10, 20), mojom::blink::ScrollType::kProgrammatic,
+      cc::ScrollSourceType::kNone);
   UpdateAllLifecyclePhasesForTest();
   LayoutObject* inner = GetLayoutObjectByElementId("inner");
   ASSERT_TRUE(inner);
@@ -1819,12 +1883,12 @@ TEST_F(LayoutObjectTest, ScrollOffsetMapping) {
 
   // Test with scroll offsets excluded:
   offset = gfx::PointF();
-  offset = inner->LocalToAncestorPoint(offset, /*ancestor=*/nullptr,
-                                       kIgnoreScrollOffset);
+  offset = inner->LocalToAncestorPoint(
+      offset, /*ancestor=*/nullptr, {MapCoordinatesMode::kIgnoreScrollOffset});
   EXPECT_EQ(offset, gfx::PointF(58, 58));
   // And back again:
-  offset = inner->AncestorToLocalPoint(/*ancestor=*/nullptr, offset,
-                                       kIgnoreScrollOffset);
+  offset = inner->AncestorToLocalPoint(
+      /*ancestor=*/nullptr, offset, {MapCoordinatesMode::kIgnoreScrollOffset});
   EXPECT_EQ(offset, gfx::PointF());
 }
 
@@ -1846,7 +1910,7 @@ TEST_F(LayoutObjectTest, QuadsInAncestor_Block) {
 
   Element* scroller_elm = GetElementById("scroller");
   ASSERT_TRUE(scroller_elm);
-  scroller_elm->scrollTo(110, 220);
+  scroller_elm->scrollToForTesting(110, 220);
   UpdateAllLifecyclePhasesForTest();
 
   const LayoutBox* scroller = GetLayoutBoxByElementId("scroller");
@@ -1880,7 +1944,8 @@ TEST_F(LayoutObjectTest, QuadsInAncestor_Block) {
 
   // Relative to #scroller, ignoring scroll offset:
   quads = Vector<gfx::QuadF>();
-  target->QuadsInAncestor(quads, scroller, kIgnoreScrollOffset);
+  target->QuadsInAncestor(quads, scroller,
+                          {MapCoordinatesMode::kIgnoreScrollOffset});
   ASSERT_EQ(quads.size(), 4u);
   EXPECT_EQ(quads[0].BoundingBox(), gfx::RectF(110, 390, 50, 30));
   EXPECT_EQ(quads[1].BoundingBox(), gfx::RectF(160, 370, 50, 50));
@@ -1909,7 +1974,7 @@ TEST_F(LayoutObjectTest, QuadsInAncestor_Inline) {
 
   Element* scroller_elm = GetElementById("scroller");
   ASSERT_TRUE(scroller_elm);
-  scroller_elm->scrollTo(110, 220);
+  scroller_elm->scrollToForTesting(110, 220);
   UpdateAllLifecyclePhasesForTest();
 
   const LayoutBox* scroller = GetLayoutBoxByElementId("scroller");
@@ -1935,11 +2000,219 @@ TEST_F(LayoutObjectTest, QuadsInAncestor_Inline) {
 
   // Relative to #scroller, ignoring scroll offset:
   quads = Vector<gfx::QuadF>();
-  target->QuadsInAncestor(quads, scroller, kIgnoreScrollOffset);
+  target->QuadsInAncestor(quads, scroller,
+                          {MapCoordinatesMode::kIgnoreScrollOffset});
   ASSERT_EQ(quads.size(), 3u);
   EXPECT_EQ(quads[0].BoundingBox(), gfx::RectF(210, 240, 60, 20));
   EXPECT_EQ(quads[1].BoundingBox(), gfx::RectF(110, 260, 180, 20));
   EXPECT_EQ(quads[2].BoundingBox(), gfx::RectF(110, 280, 20, 20));
+}
+
+TEST_F(LayoutObjectTest, GeneratingNode) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      #pseudo::before { content: "before"; display: block; }
+    </style>
+    <div id="normal">Normal</div>
+    <div id="pseudo"></div>
+    <div id="table" style="display: table">
+      <div id="row" style="display: table-row">
+        Text
+      </div>
+    </div>
+    <div id="table2" style="display: table">
+      Text2
+    </div>
+  )HTML");
+
+  // 1. Normal element
+  LayoutObject* normal = GetLayoutObjectByElementId("normal");
+  EXPECT_EQ(GetElementById("normal"), normal->GeneratingNode());
+
+  // 2. Pseudo element ::before
+  Element* pseudo = GetElementById("pseudo");
+  LayoutObject* pseudo_layout = pseudo->GetLayoutObject();
+  LayoutObject* before = pseudo_layout->SlowFirstChild();
+  ASSERT_TRUE(before);
+  ASSERT_TRUE(before->IsPseudoElement());
+  EXPECT_EQ(pseudo, before->GeneratingNode());
+
+  // 3. Anonymous object
+  // The text node "Text" is inside "row". A table row expects cells.
+  // So an anonymous table cell should be created around the text.
+  // The hierarchy: LayoutTable -> LayoutTableRow -> LayoutTableCell (Anonymous)
+  // -> LayoutText
+  LayoutObject* row = GetLayoutObjectByElementId("row");
+  LayoutObject* anonymous_cell = row->SlowFirstChild();
+  ASSERT_TRUE(anonymous_cell);
+  EXPECT_TRUE(anonymous_cell->IsAnonymous());
+  EXPECT_TRUE(anonymous_cell->IsTableCell());
+
+  // GetNode() is null for anonymous objects, so it recurses up to Parent().
+  // Parent is "row", so it should return the row element.
+  EXPECT_EQ(GetElementById("row"), anonymous_cell->GeneratingNode());
+
+  // 4. Nested Anonymous objects
+  // Hierarchy: LayoutTable -> LayoutTableSection(Anon) -> LayoutTableRow(Anon)
+  // -> LayoutTableCell(Anon) -> LayoutText
+  LayoutObject* table2 = GetLayoutObjectByElementId("table2");
+  LayoutObject* section = table2->SlowFirstChild();
+  ASSERT_TRUE(section);
+  EXPECT_TRUE(section->IsAnonymous());
+  EXPECT_EQ(GetElementById("table2"), section->GeneratingNode());
+
+  LayoutObject* row2 = section->SlowFirstChild();
+  ASSERT_TRUE(row2);
+  EXPECT_TRUE(row2->IsAnonymous());
+  EXPECT_EQ(GetElementById("table2"), row2->GeneratingNode());
+
+  LayoutObject* cell2 = row2->SlowFirstChild();
+  ASSERT_TRUE(cell2);
+  EXPECT_TRUE(cell2->IsAnonymous());
+  EXPECT_EQ(GetElementById("table2"), cell2->GeneratingNode());
+}
+
+// crbug.com/495648335 - Anonymous blocks inside non-block-container parents
+// should not truncate text with ellipsis, since their parent layout doesn't
+// support text truncation.
+TEST_F(LayoutObjectTest, NoEllipsisForAnonymousBlockWithNonBlockParent) {
+  SetBodyInnerHTML(R"HTML(
+    <div id="outer"
+         style="width:100px; overflow:hidden; text-overflow:ellipsis;
+                white-space:nowrap;">
+      <div id="flex" style="display:flex;">
+        <span id="text">This is long text that overflows the container</span>
+      </div>
+    </div>
+  )HTML");
+
+  UpdateAllLifecyclePhasesForTest();
+
+  const LayoutObject* text_layout = GetLayoutObjectByElementId("text");
+  ASSERT_TRUE(text_layout);
+
+  // ContainingBlockForTextOverflow() returns nullptr because the parent is a
+  // flex container (non-block-container).
+  EXPECT_EQ(nullptr, text_layout->ContainingBlockForTextOverflow());
+
+  // Since ContainingBlockForTextOverflow() is nullptr, no block will have
+  // ShouldTruncateOverflowingText() set to true. Verify this on the anonymous
+  // block flow inside the flex container.
+  const LayoutObject* flex_layout = GetLayoutObjectByElementId("flex");
+  ASSERT_TRUE(flex_layout);
+  EXPECT_FALSE(flex_layout->BehavesLikeBlockContainer());
+
+  const LayoutObject* child = flex_layout->SlowFirstChild();
+  while (child && !child->IsAnonymousBlockFlow()) {
+    child = child->NextSibling();
+  }
+  if (child) {
+    const auto* anon_block = DynamicTo<LayoutBlockFlow>(child);
+    if (anon_block) {
+      EXPECT_FALSE(anon_block->ShouldTruncateOverflowingText());
+    }
+  }
+}
+
+TEST_F(LayoutObjectTest, InCanvasSubtree) {
+  SetBodyInnerHTML(R"HTML(
+    <canvas id="canvas" htmlsubtree>
+      <div id="canvas-child-div">Div</div>
+      <span id="canvas-child-span">Span</span>
+      <iframe></iframe>
+    </canvas>
+    <div id="non-canvas-child-div">Div</div>
+  )HTML");
+  SetChildFrameHTML(R"HTML(
+    <div id="div">Div</div>
+    <span id="span">Span</span>
+  )HTML");
+  UpdateAllLifecyclePhasesForTest();
+
+  auto* canvas = GetLayoutObjectByElementId("canvas");
+  EXPECT_TRUE(canvas->IsCanvasOrInCanvasSubtree());
+  EXPECT_FALSE(canvas->IsInCanvasSubtree());
+  EXPECT_FALSE(canvas->Parent()->IsCanvasOrInCanvasSubtree());
+  EXPECT_FALSE(canvas->Parent()->IsInCanvasSubtree());
+  EXPECT_FALSE(canvas->View()->IsCanvasOrInCanvasSubtree());
+  EXPECT_FALSE(canvas->View()->IsInCanvasSubtree());
+
+  auto* canvas_child_div = GetLayoutObjectByElementId("canvas-child-div");
+  EXPECT_TRUE(canvas_child_div->Parent()->IsAnonymous());
+  EXPECT_TRUE(canvas_child_div->Parent()->IsCanvasOrInCanvasSubtree());
+  EXPECT_TRUE(canvas_child_div->Parent()->IsInCanvasSubtree());
+  EXPECT_TRUE(canvas_child_div->IsCanvasOrInCanvasSubtree());
+  EXPECT_TRUE(canvas_child_div->IsInCanvasSubtree());
+  EXPECT_TRUE(canvas_child_div->SlowFirstChild()->IsCanvasOrInCanvasSubtree());
+  EXPECT_TRUE(canvas_child_div->SlowFirstChild()->IsInCanvasSubtree());
+
+  auto* canvas_child_span = GetLayoutObjectByElementId("canvas-child-span");
+  EXPECT_TRUE(canvas_child_span->IsCanvasOrInCanvasSubtree());
+  EXPECT_TRUE(canvas_child_span->IsInCanvasSubtree());
+  EXPECT_TRUE(canvas_child_span->SlowFirstChild()->IsCanvasOrInCanvasSubtree());
+  EXPECT_TRUE(canvas_child_span->SlowFirstChild()->IsInCanvasSubtree());
+
+  auto* non_canvas_child_div =
+      GetLayoutObjectByElementId("non-canvas-child-div");
+  EXPECT_FALSE(non_canvas_child_div->IsCanvasOrInCanvasSubtree());
+  EXPECT_FALSE(non_canvas_child_div->IsInCanvasSubtree());
+  EXPECT_FALSE(
+      non_canvas_child_div->SlowFirstChild()->IsCanvasOrInCanvasSubtree());
+  EXPECT_FALSE(non_canvas_child_div->SlowFirstChild()->IsInCanvasSubtree());
+
+  auto* subframe_div =
+      ChildDocument().getElementById(AtomicString("div"))->GetLayoutObject();
+  EXPECT_TRUE(subframe_div->Parent()->IsCanvasOrInCanvasSubtree());
+  EXPECT_TRUE(subframe_div->Parent()->IsInCanvasSubtree());
+  EXPECT_TRUE(subframe_div->View()->IsCanvasOrInCanvasSubtree());
+  EXPECT_TRUE(subframe_div->View()->IsInCanvasSubtree());
+  EXPECT_TRUE(subframe_div->IsCanvasOrInCanvasSubtree());
+  EXPECT_TRUE(subframe_div->IsInCanvasSubtree());
+  EXPECT_TRUE(subframe_div->SlowFirstChild()->IsCanvasOrInCanvasSubtree());
+  EXPECT_TRUE(subframe_div->SlowFirstChild()->IsInCanvasSubtree());
+
+  auto* subframe_span =
+      ChildDocument().getElementById(AtomicString("span"))->GetLayoutObject();
+  EXPECT_TRUE(subframe_span->Parent()->IsAnonymous());
+  EXPECT_TRUE(subframe_span->Parent()->IsCanvasOrInCanvasSubtree());
+  EXPECT_TRUE(subframe_span->Parent()->IsInCanvasSubtree());
+  EXPECT_TRUE(subframe_span->IsCanvasOrInCanvasSubtree());
+  EXPECT_TRUE(subframe_span->IsInCanvasSubtree());
+  EXPECT_TRUE(subframe_span->SlowFirstChild()->IsCanvasOrInCanvasSubtree());
+  EXPECT_TRUE(subframe_span->SlowFirstChild()->IsInCanvasSubtree());
+}
+
+// This test uses a lot of stack. Not all platforms behave the same, just run as
+// linux only.
+#if BUILDFLAG(IS_LINUX)
+#define MAYBE_Depth Depth
+#else
+#define MAYBE_Depth DISABLED_Depth
+#endif
+TEST_F(LayoutObjectTest, MAYBE_Depth) {
+  UpdateAllLifecyclePhasesForTest();
+
+  EXPECT_EQ(0u, GetDocument().GetLayoutView()->Depth());
+
+  {
+    Element* curr = GetDocument().body();
+    for (unsigned i = 0; i < LayoutObject::kMaxLayoutObjectDepth + 5; ++i) {
+      Element* next =
+          MakeGarbageCollected<Element>(html_names::kDivTag, &GetDocument());
+      curr->AppendChild(next);
+      curr = next;
+    }
+  }
+  UpdateAllLifecyclePhasesForTest();
+
+  // Start at the <body> and go through all the layout objects.
+  LayoutObject* object = GetDocument().body()->GetLayoutObject();
+  unsigned depth = object->Depth();
+  while (object) {
+    EXPECT_EQ(object->Depth(), depth);
+    object = object->SlowFirstChild();
+    ++depth;
+  }
 }
 
 }  // namespace blink

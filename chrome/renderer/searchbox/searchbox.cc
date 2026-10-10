@@ -32,6 +32,7 @@
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
 #include "third_party/blink/public/web/web_frame.h"
 #include "third_party/blink/public/web/web_local_frame.h"
+#include "ui/base/page_transition_types.h"
 
 namespace {
 
@@ -72,8 +73,7 @@ SearchBoxIconURLHelper::SearchBoxIconURLHelper(const SearchBox* search_box)
     : search_box_(search_box) {
 }
 
-SearchBoxIconURLHelper::~SearchBoxIconURLHelper() {
-}
+SearchBoxIconURLHelper::~SearchBoxIconURLHelper() = default;
 
 std::string SearchBoxIconURLHelper::GetMainFrameToken() const {
   return search_box_->render_frame()
@@ -134,7 +134,7 @@ bool ParseIconRestrictedUrl(const GURL& url,
   DCHECK(frame_token);
   DCHECK(rid);
   // Strip leading slash.
-  std::string raw_path = url.path();
+  std::string raw_path = url.GetPath();
   DCHECK_GT(raw_path.length(), (size_t) 0);
   DCHECK_EQ(raw_path[0], '/');
   raw_path = raw_path.substr(1);

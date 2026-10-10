@@ -2763,9 +2763,9 @@ TEST_F(ColumnLayoutAlgorithmTest, MinMax) {
   ComputedStyleBuilder builder(layout_object->StyleRef());
   builder.SetColumnCount(3);
   builder.SetColumnWidth(80);
-  layout_object->SetStyle(builder.TakeStyle(),
+  layout_object->SetStyle(*builder.TakeStyle(),
                           LayoutObject::ApplyStyleChanges::kNo);
-  sizes = algorithm.ComputeMinMaxSizes(MinMaxSizesFloatInput()).sizes;
+  sizes = algorithm.ComputeMinMaxSizes(MinMaxSizesInput::Unconstrained()).sizes;
   ASSERT_TRUE(sizes.has_value());
   EXPECT_EQ(LayoutUnit(50), sizes->min_size);
   EXPECT_EQ(LayoutUnit(320), sizes->max_size);
@@ -2773,9 +2773,9 @@ TEST_F(ColumnLayoutAlgorithmTest, MinMax) {
   // Only column-count set.
   builder = ComputedStyleBuilder(layout_object->StyleRef());
   builder.SetHasAutoColumnWidth();
-  layout_object->SetStyle(builder.TakeStyle(),
+  layout_object->SetStyle(*builder.TakeStyle(),
                           LayoutObject::ApplyStyleChanges::kNo);
-  sizes = algorithm.ComputeMinMaxSizes(MinMaxSizesFloatInput()).sizes;
+  sizes = algorithm.ComputeMinMaxSizes(MinMaxSizesInput::Unconstrained()).sizes;
   ASSERT_TRUE(sizes.has_value());
   EXPECT_EQ(LayoutUnit(170), sizes->min_size);
   EXPECT_EQ(LayoutUnit(320), sizes->max_size);
@@ -2784,9 +2784,9 @@ TEST_F(ColumnLayoutAlgorithmTest, MinMax) {
   builder = ComputedStyleBuilder(layout_object->StyleRef());
   builder.SetColumnWidth(80);
   builder.SetHasAutoColumnCount();
-  layout_object->SetStyle(builder.TakeStyle(),
+  layout_object->SetStyle(*builder.TakeStyle(),
                           LayoutObject::ApplyStyleChanges::kNo);
-  sizes = algorithm.ComputeMinMaxSizes(MinMaxSizesFloatInput()).sizes;
+  sizes = algorithm.ComputeMinMaxSizes(MinMaxSizesInput::Unconstrained()).sizes;
   ASSERT_TRUE(sizes.has_value());
   EXPECT_EQ(LayoutUnit(50), sizes->min_size);
   EXPECT_EQ(LayoutUnit(100), sizes->max_size);
@@ -6471,6 +6471,575 @@ TEST_F(ColumnLayoutAlgorithmTest, TallReplacedContent) {
 )DUMP";
   EXPECT_EQ(expectation, dump);
 }
+
+TEST_F(ColumnLayoutAlgorithmTest, GapDecorationBasic) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+ body {
+  margin: 0px;
+ }
+
+ #container {
+  border: 2px solid rgb(96 139 168);
+  width: 200px;
+  column-count: 3;
+  column-width: 60px;
+  column-gap: 10px;
+  column-rule-width: 10px;
+  column-rule-style: solid;
+  column-rule-color: purple;
+ }
+
+ p {
+    background: rgb(96 139 168 / 0.2);
+    height: 200px;
+    margin: 0px;
+ }
+
+</style>
+
+  <body>
+  <div id="container">
+    <p>One</p>
+    <p>Two</p>
+    <p>Three</p>
+  </div>
+</body>
+  )HTML");
+
+  BlockNode container(GetLayoutBoxByElementId("container"));
+  ConstraintSpace space = ConstructBlockLayoutTestConstraintSpace(
+      {WritingMode::kHorizontalTb, TextDirection::kLtr},
+      LogicalSize(LayoutUnit(1000), kIndefiniteSize), true, true);
+  FragmentGeometry fragment_geometry = CalculateInitialFragmentGeometry(
+      space, container, /* break_token */ nullptr);
+  ColumnLayoutAlgorithm algorithm({container, fragment_geometry, space});
+
+  algorithm.Layout();
+
+  const GapGeometry* gap_geometry = algorithm.GetGapGeometry();
+
+  ASSERT_TRUE(gap_geometry);
+
+  const Vector<MainGap> expected_row_gaps = {};
+  const Vector<CrossGap> expected_column_gaps = {
+      CrossGap(LogicalOffset(LayoutUnit(67), LayoutUnit(2))),
+      CrossGap(LogicalOffset(LayoutUnit(137), LayoutUnit(2)))};
+
+  const Vector<CrossGapRange> expected_cross_gap_ranges_for_main_gaps = {};
+
+  ASSERT_EQ(expected_cross_gap_ranges_for_main_gaps.size(),
+            expected_row_gaps.size());
+
+  const Vector<MainGap>& row_gaps = gap_geometry->GetMainGaps();
+  const Vector<CrossGap>& column_gaps = gap_geometry->GetCrossGaps();
+  EXPECT_EQ(row_gaps.size(), 0);
+  EXPECT_EQ(column_gaps.size(), 2);
+
+  EXPECT_EQ(gap_geometry->GetContentInlineStart(), LayoutUnit(2));
+  EXPECT_EQ(gap_geometry->GetContentBlockStart(), LayoutUnit(2));
+  EXPECT_EQ(gap_geometry->GetContentInlineEnd(), LayoutUnit(202));
+  EXPECT_EQ(gap_geometry->GetContentBlockEnd(), LayoutUnit(202));
+
+  VerifyMainGaps(expected_row_gaps, row_gaps);
+  VerifyCrossGaps(expected_column_gaps, column_gaps);
+}
+
+TEST_F(ColumnLayoutAlgorithmTest,
+       GapDecorationContentEndPastContainer) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+ body {
+  margin: 0px;
+ }
+
+ #container {
+  border: 2px solid rgb(96 139 168);
+  width: 200px;
+  column-count: 3;
+  column-width: 60px;
+  column-gap: 10px;
+  column-rule-width: 10px;
+  column-rule-style: solid;
+  column-rule-color: purple;
+   height: 200px;
+ }
+
+ p {
+    background: rgb(96 139 168 / 0.2);
+    height: 200px;
+    margin: 0px;
+ }
+
+</style>
+
+  <body>
+  <div id="container">
+    <p>One</p>
+    <p>Two</p>
+    <p>Three</p>
+    <p> Four </p>
+    <p> Five </p>
+
+  </div>
+</body>
+  )HTML");
+
+  BlockNode container(GetLayoutBoxByElementId("container"));
+  ConstraintSpace space = ConstructBlockLayoutTestConstraintSpace(
+      {WritingMode::kHorizontalTb, TextDirection::kLtr},
+      LogicalSize(LayoutUnit(1000), kIndefiniteSize), true, true);
+  FragmentGeometry fragment_geometry = CalculateInitialFragmentGeometry(
+      space, container, /* break_token */ nullptr);
+  ColumnLayoutAlgorithm algorithm({container, fragment_geometry, space});
+
+  algorithm.Layout();
+
+  const GapGeometry* gap_geometry = algorithm.GetGapGeometry();
+
+  ASSERT_TRUE(gap_geometry);
+
+  const Vector<MainGap>& row_gaps = gap_geometry->GetMainGaps();
+  const Vector<CrossGap>& column_gaps = gap_geometry->GetCrossGaps();
+  EXPECT_EQ(row_gaps.size(), 0);
+  EXPECT_EQ(column_gaps.size(), 4);
+
+  EXPECT_EQ(gap_geometry->GetContentInlineStart(), LayoutUnit(2));
+  EXPECT_EQ(gap_geometry->GetContentBlockStart(), LayoutUnit(2));
+  // The elements overflow, so the content end should be past the container end.
+  EXPECT_EQ(gap_geometry->GetContentInlineEnd(), LayoutUnit(277));
+  EXPECT_EQ(gap_geometry->GetContentBlockEnd(), LayoutUnit(202));
+}
+
+TEST_F(ColumnLayoutAlgorithmTest,
+       GapDecorationColumnWrapOneColumn) {
+  SetBodyInnerHTML(R"HTML(
+ <style>
+  body {
+    margin: 0px;
+  }
+
+  #container {
+    border: 2px solid rgb(96 139 168);
+    width: 200px;
+    height: 220px;
+    column-height: 60px;
+    column-gap: 10px;
+    row-gap: 10px;
+    column-rule-width: 10px;
+    column-rule-style: solid;
+    column-rule-color: blue;
+    row-rule-width: 10px;
+    row-rule-style: solid;
+    row-rule-color: gold;
+    column-wrap: wrap;
+    column-width: 60px;
+    column-count: 1;
+    column-fill: auto;
+  }
+
+  p {
+    background: rgb(96 139 168 / 0.2);
+    height: 60px;
+    margin: 0px;
+  }
+
+  h2 {
+    column-span: all;
+    background-color: #4d4e53;
+    color: #fff;
+    margin: 0px;
+    opacity: 0.5;
+  }
+</style>
+
+<body>
+  <div id="container">
+    <p>One</p>
+    <p>Two</p>
+    <h2>Spanner</h2>
+
+    <p>Three</p>
+  </div>
+</body>
+  )HTML");
+
+  BlockNode container(GetLayoutBoxByElementId("container"));
+  ConstraintSpace space = ConstructBlockLayoutTestConstraintSpace(
+      {WritingMode::kHorizontalTb, TextDirection::kLtr},
+      LogicalSize(LayoutUnit(1000), kIndefiniteSize), true, true);
+  FragmentGeometry fragment_geometry = CalculateInitialFragmentGeometry(
+      space, container, /* break_token */ nullptr);
+  ColumnLayoutAlgorithm algorithm({container, fragment_geometry, space});
+
+  algorithm.Layout();
+
+  const GapGeometry* gap_geometry = algorithm.GetGapGeometry();
+
+  ASSERT_TRUE(gap_geometry);
+
+  const Vector<MainGap> expected_row_gaps = {
+      MainGap(LayoutUnit(67)), MainGap(LayoutUnit(137)),
+      MainGap(LayoutUnit(142), SpannerMainGapType::kStart),
+      MainGap(LayoutUnit(143), SpannerMainGapType::kEnd),
+      MainGap(LayoutUnit(207))};
+  const Vector<CrossGap> expected_column_gaps = {};
+
+  const Vector<MainGap>& row_gaps = gap_geometry->GetMainGaps();
+  const Vector<CrossGap>& column_gaps = gap_geometry->GetCrossGaps();
+  EXPECT_EQ(row_gaps.size(), 5);
+  EXPECT_EQ(column_gaps.size(), 0);
+
+  EXPECT_FALSE(row_gaps[0].IsSpannerMainGap());
+  EXPECT_TRUE(row_gaps[2].IsStartSpannerMainGap());
+  EXPECT_TRUE(row_gaps[3].IsEndSpannerMainGap());
+
+  EXPECT_EQ(gap_geometry->GetContentInlineStart(), LayoutUnit(2));
+  EXPECT_EQ(gap_geometry->GetContentBlockStart(), LayoutUnit(2));
+  EXPECT_EQ(gap_geometry->GetContentInlineEnd(), LayoutUnit(202));
+  EXPECT_EQ(gap_geometry->GetContentBlockEnd(), LayoutUnit(222));
+
+  VerifyMainGaps(expected_row_gaps, row_gaps);
+  VerifyCrossGaps(expected_column_gaps, column_gaps);
+}
+
+TEST_F(ColumnLayoutAlgorithmTest, GapDecorationColumnWrapBasic) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+  body {
+    margin: 0px;
+  }
+
+  #container {
+    border: 2px solid rgb(96 139 168);
+    width: 200px;
+    height: 130px;
+    column-count: 3;
+    column-width: 60px;
+    column-height: 60px;
+    column-gap: 10px;
+    row-gap: 10px;
+    column-rule-width: 10px;
+    column-rule-style: solid;
+    column-rule-color: yellow;
+    row-rule-width: 10px;
+    row-rule-style: solid;
+    row-rule-color: blue;
+    column-wrap: wrap;
+    column-fill: auto;
+  }
+
+  p {
+    background: rgb(96 139 168 / 0.2);
+    height: 60px;
+    margin: 0px;
+  }
+</style>
+
+<body>
+  <div id="container">
+    <p>One</p>
+    <p>Two</p>
+    <p>Three</p>
+    <p>Four</p>
+    <p>Five</p>
+    <p>Six</p>
+  </div>
+</body>
+  )HTML");
+
+  BlockNode container(GetLayoutBoxByElementId("container"));
+  ConstraintSpace space = ConstructBlockLayoutTestConstraintSpace(
+      {WritingMode::kHorizontalTb, TextDirection::kLtr},
+      LogicalSize(LayoutUnit(1000), kIndefiniteSize), true, true);
+  FragmentGeometry fragment_geometry = CalculateInitialFragmentGeometry(
+      space, container, /* break_token */ nullptr);
+  ColumnLayoutAlgorithm algorithm({container, fragment_geometry, space});
+
+  algorithm.Layout();
+
+  const GapGeometry* gap_geometry = algorithm.GetGapGeometry();
+
+  ASSERT_TRUE(gap_geometry);
+
+  const Vector<MainGap> expected_row_gaps = {MainGap(LayoutUnit(67))};
+  const Vector<CrossGap> expected_column_gaps = {
+      CrossGap(LogicalOffset(LayoutUnit(67), LayoutUnit(2))),
+      CrossGap(LogicalOffset(LayoutUnit(137), LayoutUnit(2))),
+  };
+
+  const Vector<CrossGapRange> expected_cross_gap_ranges_for_main_gaps = {
+      CrossGapRange(0, 1)};
+
+  ASSERT_EQ(expected_cross_gap_ranges_for_main_gaps.size(),
+            expected_row_gaps.size());
+
+  const Vector<MainGap>& row_gaps = gap_geometry->GetMainGaps();
+  const Vector<CrossGap>& column_gaps = gap_geometry->GetCrossGaps();
+  EXPECT_EQ(row_gaps.size(), 1);
+  EXPECT_EQ(column_gaps.size(), 2);
+
+  EXPECT_EQ(gap_geometry->GetContentInlineStart(), LayoutUnit(2));
+  EXPECT_EQ(gap_geometry->GetContentBlockStart(), LayoutUnit(2));
+  EXPECT_EQ(gap_geometry->GetContentInlineEnd(), LayoutUnit(202));
+  EXPECT_EQ(gap_geometry->GetContentBlockEnd(), LayoutUnit(132));
+
+  VerifyMainGaps(expected_row_gaps, row_gaps);
+  VerifyCrossGaps(expected_column_gaps, column_gaps);
+
+  EXPECT_FALSE(row_gaps.back().IsSpannerMainGap());
+}
+
+TEST_F(ColumnLayoutAlgorithmTest,
+       GapDecorationColumnWrapAndSpanner) {
+  SetBodyInnerHTML(R"HTML(
+<style>
+  #container {
+    line-height: 20px;
+    border: 2px solid rgb(96 139 168);
+    width: 200px;
+    height: 200px;
+    column-height: 80px;
+    column-gap: 10px;
+    row-gap: 10px;
+    column-rule-width: 10px;
+    column-rule-style: solid;
+    column-rule-color: blue;
+    row-rule-width: 10px;
+    row-rule-style: solid;
+    row-rule-color: gold;
+    column-wrap: wrap;
+    column-width: 60px;
+    column-count: 3;
+  }
+
+  p {
+    background: rgb(96 139 168 / 0.2);
+    height: 60px;
+    margin: 0px;
+  }
+
+  h2 {
+    column-span: all;
+    background-color: #4d4e53;
+    color: #fff;
+    margin: 0px;
+    opacity: 0.5;
+    height: 10px;
+  }
+</style>
+
+<body>
+  <div id="container">
+    <p>One</p>
+    <p>Two</p>
+    <h2></h2>
+    <p>Three</p>
+    <p>Four</p>
+    <p>Five</p>
+    <p>Six</p>
+  </div>
+</body>
+  )HTML");
+
+  BlockNode container(GetLayoutBoxByElementId("container"));
+  ConstraintSpace space = ConstructBlockLayoutTestConstraintSpace(
+      {WritingMode::kHorizontalTb, TextDirection::kLtr},
+      LogicalSize(LayoutUnit(1000), kIndefiniteSize), true, true);
+  FragmentGeometry fragment_geometry = CalculateInitialFragmentGeometry(
+      space, container, /* break_token */ nullptr);
+  ColumnLayoutAlgorithm algorithm({container, fragment_geometry, space});
+
+  algorithm.Layout();
+
+  const GapGeometry* gap_geometry = algorithm.GetGapGeometry();
+
+  ASSERT_TRUE(gap_geometry);
+
+  const Vector<MainGap> expected_main_gaps = {MainGap(LayoutUnit(42)),
+                                              MainGap(LayoutUnit(52)),
+                                              MainGap(LayoutUnit(87))};
+  const Vector<CrossGap> expected_column_gaps = {
+      CrossGap(LogicalOffset(LayoutUnit(67), LayoutUnit(2))),
+      CrossGap(LogicalOffset(LayoutUnit(137), LayoutUnit(2)))};
+
+  const Vector<CrossGapRange> expected_cross_gap_ranges_for_main_gaps = {
+      CrossGapRange(0, 0), CrossGapRange(0, 1)};
+
+  const Vector<MainGap>& main_gaps = gap_geometry->GetMainGaps();
+  const Vector<CrossGap>& column_gaps = gap_geometry->GetCrossGaps();
+  ASSERT_EQ(main_gaps.size(), 3);
+  ASSERT_EQ(column_gaps.size(), 2);
+
+  EXPECT_EQ(gap_geometry->GetContentInlineStart(), LayoutUnit(2));
+  EXPECT_EQ(gap_geometry->GetContentBlockStart(), LayoutUnit(2));
+  EXPECT_EQ(gap_geometry->GetContentInlineEnd(), LayoutUnit(202));
+  EXPECT_EQ(gap_geometry->GetContentBlockEnd(), LayoutUnit(202));
+
+  EXPECT_TRUE(main_gaps[0].IsSpannerMainGap());
+  EXPECT_TRUE(main_gaps[0].IsStartSpannerMainGap());
+  EXPECT_TRUE(main_gaps[1].IsEndSpannerMainGap());
+  EXPECT_FALSE(main_gaps[2].IsSpannerMainGap());
+
+  VerifyMainGaps(expected_main_gaps, main_gaps);
+  VerifyCrossGaps(expected_column_gaps, column_gaps);
+}
+
+TEST_F(ColumnLayoutAlgorithmTest,
+       GapDecorationColumnWrapLastRowNotFilled) {
+  SetBodyInnerHTML(R"HTML(
+ <style>
+  #container {
+    columns: 4;
+    gap: 20px;
+    column-fill: auto;
+    column-rule: solid;
+    row-rule-style: solid;
+    width: 460px;
+    column-height: 100px;
+    column-wrap: wrap;
+  }
+</style>
+
+<div id="container" style="">
+  <div style="height:1300px; background:cyan;"></div>
+</div>
+
+)HTML");
+
+  BlockNode container(GetLayoutBoxByElementId("container"));
+  ConstraintSpace space = ConstructBlockLayoutTestConstraintSpace(
+      {WritingMode::kHorizontalTb, TextDirection::kLtr},
+      LogicalSize(LayoutUnit(1000), kIndefiniteSize), true, true);
+  FragmentGeometry fragment_geometry = CalculateInitialFragmentGeometry(
+      space, container, /* break_token */ nullptr);
+  ColumnLayoutAlgorithm algorithm({container, fragment_geometry, space});
+
+  algorithm.Layout();
+
+  const GapGeometry* gap_geometry = algorithm.GetGapGeometry();
+
+  ASSERT_TRUE(gap_geometry);
+
+  const Vector<MainGap> expected_row_gaps = {MainGap(LayoutUnit(110)),
+                                             MainGap(LayoutUnit(230)),
+                                             MainGap(LayoutUnit(350))};
+  const Vector<CrossGap> expected_column_gaps = {
+      CrossGap(LogicalOffset(LayoutUnit(110), LayoutUnit(0))),
+      CrossGap(LogicalOffset(LayoutUnit(230), LayoutUnit(0))),
+      CrossGap(LogicalOffset(LayoutUnit(350), LayoutUnit(0)))};
+
+  const Vector<CrossGapRange> expected_cross_gap_ranges_for_main_gaps = {
+      CrossGapRange(0, 2), CrossGapRange(0, 2), CrossGapRange(0, 2)};
+
+  ASSERT_EQ(expected_cross_gap_ranges_for_main_gaps.size(), 3);
+
+  const Vector<MainGap>& row_gaps = gap_geometry->GetMainGaps();
+  const Vector<CrossGap>& column_gaps = gap_geometry->GetCrossGaps();
+  EXPECT_EQ(row_gaps.size(), 3);
+  EXPECT_EQ(column_gaps.size(), 3);
+
+  VerifyMainGaps(expected_row_gaps, row_gaps);
+  VerifyCrossGaps(expected_column_gaps, column_gaps);
+}
+
+TEST_F(ColumnLayoutAlgorithmTest, GapDecorationTwoSpanners) {
+  SetBodyInnerHTML(R"HTML(
+ <style>
+  body {
+    margin: 0px;
+  }
+
+  #container {
+    border: 2px solid rgb(96 139 168);
+    width: 200px;
+    height: 200px;
+    column-gap: 10px;
+    row-gap: 10px;
+    column-rule-width: 10px;
+    column-rule-style: solid;
+    column-rule-color: blue;
+    row-rule-width: 10px;
+    row-rule-style: solid;
+    row-rule-color: gold;
+    column-width: 60px;
+    column-count: 3;
+    column-fill: auto;
+  }
+
+  p {
+    background: rgb(96 139 168 / 0.2);
+    height: 50px;
+    margin: 0px;
+  }
+
+  h2 {
+    column-span: all;
+    background-color: #4d4e53;
+    color: #fff;
+    margin: 0px;
+    opacity: 0.5;
+  }
+
+</style>
+
+<body>
+  <div id="container">
+    <p>One</p>
+    <p>Two</p>
+    <h2>Spanner</h2>
+
+    <p>Three</p>
+    <p>Four</p>
+    <p>Five</p>
+    <h2>Spanner</h2>
+    <p>Six</p>
+    <p>Seven</p>
+    <p>Eight</p>
+  </div>
+</body>
+
+)HTML");
+
+  BlockNode container(GetLayoutBoxByElementId("container"));
+  ConstraintSpace space = ConstructBlockLayoutTestConstraintSpace(
+      {WritingMode::kHorizontalTb, TextDirection::kLtr},
+      LogicalSize(LayoutUnit(1000), kIndefiniteSize), true, true);
+  FragmentGeometry fragment_geometry = CalculateInitialFragmentGeometry(
+      space, container, /* break_token */ nullptr);
+  ColumnLayoutAlgorithm algorithm({container, fragment_geometry, space});
+
+  algorithm.Layout();
+
+  const GapGeometry* gap_geometry = algorithm.GetGapGeometry();
+
+  ASSERT_TRUE(gap_geometry);
+
+  const Vector<MainGap> expected_row_gaps = {
+      MainGap(LayoutUnit(35.34375)), MainGap(LayoutUnit(36.34375)),
+      MainGap(LayoutUnit(86.34375)), MainGap(LayoutUnit(87.34375))};
+  const Vector<CrossGap> expected_column_gaps = {
+      CrossGap(LogicalOffset(LayoutUnit(67), LayoutUnit(2))),
+      CrossGap(LogicalOffset(LayoutUnit(137), LayoutUnit(2)))};
+
+  const Vector<CrossGapRange> expected_cross_gap_ranges_for_main_gaps = {
+      CrossGapRange(0, 1), CrossGapRange(0, 1)};
+
+  ASSERT_EQ(expected_cross_gap_ranges_for_main_gaps.size(), 2);
+
+  const Vector<MainGap>& row_gaps = gap_geometry->GetMainGaps();
+  const Vector<CrossGap>& column_gaps = gap_geometry->GetCrossGaps();
+  EXPECT_EQ(row_gaps.size(), 4);
+  EXPECT_EQ(column_gaps.size(), 2);
+
+  EXPECT_TRUE(row_gaps[0].IsStartSpannerMainGap());
+  EXPECT_TRUE(row_gaps[1].IsEndSpannerMainGap());
+  EXPECT_TRUE(row_gaps[2].IsStartSpannerMainGap());
+  EXPECT_TRUE(row_gaps[3].IsEndSpannerMainGap());
+
+  VerifyMainGaps(expected_row_gaps, row_gaps);
+  VerifyCrossGaps(expected_column_gaps, column_gaps);
+  }
 
 }  // anonymous namespace
 }  // namespace blink

@@ -47,11 +47,6 @@ LayoutBoxModelObject* EnclosingBoxModelObject(LayoutObject* object) {
   return To<LayoutBoxModelObject>(object);
 }
 
-bool IsCoordinateInPage(int top, int left, const gfx::Rect& page) {
-  return page.x() <= left && left < page.right() && page.y() <= top &&
-         top < page.bottom();
-}
-
 }  // namespace
 
 PrintContext::PrintContext(LocalFrame* frame)
@@ -92,7 +87,8 @@ gfx::Rect PrintContext::PageRect(wtf_size_t page_index) const {
   // about that here.
   DCHECK_EQ(gfx::RectF(physical_rect), gfx::RectF(page_rect));
 
-  page_rect.Offset(-frame_->View()->LayoutViewport()->ScrollOffsetInt());
+  page_rect.Offset(
+      -frame_->View()->LayoutViewport()->PixelSnappedScrollOffset());
 
   return page_rect;
 }
@@ -143,12 +139,14 @@ int PrintContext::PageNumberForElement(Element* element,
   if (!box)
     return -1;
 
-  int top = box->OffsetTop(box->OffsetParent()).ToInt();
-  int left = box->OffsetLeft(box->OffsetParent()).ToInt();
+  const PhysicalOffset offset_point = box->OffsetPoint(box->OffsetParent());
+  const gfx::Point rounded_offset_point(offset_point.left.ToInt(),
+                                        offset_point.top.ToInt());
   for (wtf_size_t page_number = 0; page_number < print_context->PageCount();
        ++page_number) {
-    if (IsCoordinateInPage(top, left, print_context->PageRect(page_number)))
+    if (print_context->PageRect(page_number).Contains(rounded_offset_point)) {
       return static_cast<int>(page_number);
+    }
   }
   return -1;
 }

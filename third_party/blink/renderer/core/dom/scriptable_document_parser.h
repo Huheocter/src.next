@@ -50,6 +50,9 @@ class CORE_EXPORT ScriptableDocumentParser : public DecodedDataDocumentParser {
   virtual bool IsWaitingForScripts() const = 0;
   virtual void DidAddPendingParserBlockingStylesheet() = 0;
   virtual void DidLoadAllPendingParserBlockingStylesheets() = 0;
+  virtual void NotifyParserPauseByUserTiming() {}
+  virtual void NotifyParserResumeByUserTiming() {}
+  virtual void ExecuteScriptsWaitingForPrerenderActivation() {}
 
   // These are used to expose the current line/column to the scripting system.
   virtual bool IsParsingAtLineNumber() const;
@@ -61,7 +64,7 @@ class CORE_EXPORT ScriptableDocumentParser : public DecodedDataDocumentParser {
   }
   bool WasCreatedByScript() const { return was_created_by_script_; }
 
-  ParserContentPolicy GetParserContentPolicy() {
+  ParserContentPolicy GetParserContentPolicy() const {
     return parser_content_policy_;
   }
 

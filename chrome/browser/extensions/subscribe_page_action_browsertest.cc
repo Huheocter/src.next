@@ -5,7 +5,7 @@
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
-#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -132,7 +132,7 @@ bool ValidatePageElement(content::RenderFrameHost* frame,
 // for invalid feeds.
 void NavigateToFeedAndValidate(net::EmbeddedTestServer* server,
                                const std::string& url,
-                               Browser* browser,
+                               BrowserWindowInterface* browser,
                                std::string extension_id,
                                bool sniff_xml_type,
                                const std::string& expected_feed_title,
@@ -144,7 +144,7 @@ void NavigateToFeedAndValidate(net::EmbeddedTestServer* server,
     // TODO(finnur): Implement this is a non-flaky way.
   }
 
-  WebContents* tab = browser->tab_strip_model()->GetActiveWebContents();
+  WebContents* tab = browser->GetTabStripModel()->GetActiveWebContents();
   content::DOMMessageQueue message_queue(tab);
   NamedFrameCreatedObserver subframe_observer(tab, "preview");
 
@@ -185,7 +185,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest, RSSMultiRelLink) {
 
   // Navigate to the feed page.
   GURL feed_url = embedded_test_server()->GetURL(kFeedPageMultiRel);
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), feed_url));
+  ASSERT_TRUE(NavigateToURL(GetActiveWebContents(), feed_url));
   // We should now have one page action ready to go in the LocationBar.
   ASSERT_TRUE(WaitForPageActionVisibilityChangeTo(1));
 }

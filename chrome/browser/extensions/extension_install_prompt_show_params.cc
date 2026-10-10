@@ -10,11 +10,14 @@
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/web_contents.h"
-#include "ui/views/native_window_tracker.h"
+#include "extensions/buildflags/buildflags.h"
+#include "ui/native_window_tracker/native_window_tracker.h"
 
 #if defined(USE_AURA)
 #include "ui/aura/window.h"
 #endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace {
 
@@ -59,7 +62,7 @@ ExtensionInstallPromptShowParams::ExtensionInstallPromptShowParams(
       parent_window_(parent_window) {
   DCHECK(profile);
   if (parent_window_) {
-    native_window_tracker_ = views::NativeWindowTracker::Create(parent_window_);
+    native_window_tracker_ = ui::NativeWindowTracker::Create(parent_window_);
   }
 }
 
@@ -71,7 +74,7 @@ content::WebContents* ExtensionInstallPromptShowParams::GetParentWebContents() {
 
 gfx::NativeWindow ExtensionInstallPromptShowParams::GetParentWindow() {
   if (WasParentDestroyed()) {
-    return nullptr;
+    return gfx::NativeWindow();
   }
 
   if (WasConfiguredForWebContents()) {

@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
@@ -14,7 +15,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "net/base/features.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
@@ -58,7 +58,7 @@ class HttpAuthHandlerNegotiateTest : public PlatformTest,
                                      public WithTaskEnvironment {
  public:
   void SetUp() override {
-    scoped_feature_list_.InitAndEnableFeature(
+    AddScopedFeatureList().InitAndEnableFeature(
         features::kPartitionConnectionsByNetworkIsolationKey);
     network_anoymization_key_ = NetworkAnonymizationKey::CreateTransient();
 #if BUILDFLAG(IS_WIN)
@@ -96,7 +96,7 @@ class HttpAuthHandlerNegotiateTest : public PlatformTest,
   void SetupMocks(MockAuthLibrary* mock_library) {
 #if BUILDFLAG(IS_WIN)
     security_package_ = std::make_unique<SecPkgInfoW>();
-    memset(security_package_.get(), 0x0, sizeof(SecPkgInfoW));
+    UNSAFE_TODO(memset(security_package_.get(), 0x0, sizeof(SecPkgInfoW)));
     security_package_->cbMaxToken = 1337;
     mock_library->ExpectQuerySecurityPackageInfo(SEC_E_OK,
                                                  security_package_.get());
@@ -261,8 +261,6 @@ class HttpAuthHandlerNegotiateTest : public PlatformTest,
   }
 
  private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-
   NetworkAnonymizationKey network_anoymization_key_;
 
 #if BUILDFLAG(IS_WIN)
@@ -360,6 +358,7 @@ TEST_F(HttpAuthHandlerNegotiateTest, CnameSync) {
   resolve_params.source = HostResolverSource::LOCAL_ONLY;
   std::unique_ptr<HostResolver::ResolveHostRequest> host_request1 =
       resolver()->CreateRequest(scheme_host_port, NetworkAnonymizationKey(),
+                                handles::kInvalidNetworkHandle,
                                 NetLogWithSource(), resolve_params);
   TestCompletionCallback callback2;
   int result = host_request1->Start(callback2.callback());
@@ -369,6 +368,7 @@ TEST_F(HttpAuthHandlerNegotiateTest, CnameSync) {
   // succeeds, to make sure the right NetworkAnonymizationKey was used.
   std::unique_ptr<HostResolver::ResolveHostRequest> host_request2 =
       resolver()->CreateRequest(scheme_host_port, network_anonymization_key(),
+                                handles::kInvalidNetworkHandle,
                                 NetLogWithSource(), resolve_params);
   TestCompletionCallback callback3;
   result = host_request2->Start(callback3.callback());
@@ -402,6 +402,7 @@ TEST_F(HttpAuthHandlerNegotiateTest, CnameAsync) {
   resolve_params.source = HostResolverSource::LOCAL_ONLY;
   std::unique_ptr<HostResolver::ResolveHostRequest> host_request1 =
       resolver()->CreateRequest(scheme_host_port, NetworkAnonymizationKey(),
+                                handles::kInvalidNetworkHandle,
                                 NetLogWithSource(), resolve_params);
   TestCompletionCallback callback2;
   int result = host_request1->Start(callback2.callback());
@@ -411,6 +412,7 @@ TEST_F(HttpAuthHandlerNegotiateTest, CnameAsync) {
   // succeeds, to make sure the right NetworkAnonymizationKey was used.
   std::unique_ptr<HostResolver::ResolveHostRequest> host_request2 =
       resolver()->CreateRequest(scheme_host_port, network_anonymization_key(),
+                                handles::kInvalidNetworkHandle,
                                 NetLogWithSource(), resolve_params);
   TestCompletionCallback callback3;
   result = host_request2->Start(callback3.callback());

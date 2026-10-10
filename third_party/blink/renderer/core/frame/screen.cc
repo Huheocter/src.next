@@ -29,7 +29,8 @@
 #include "third_party/blink/renderer/core/frame/screen.h"
 
 #include "base/numerics/safe_conversions.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
+#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/event_target_names.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -39,10 +40,6 @@
 #include "ui/display/screen_infos.h"
 
 namespace blink {
-
-namespace {
-
-}  // namespace
 
 Screen::Screen(LocalDOMWindow* window, int64_t display_id)
     : ExecutionContextClient(window), display_id_(display_id) {}
@@ -64,6 +61,14 @@ bool Screen::AreWebExposedScreenPropertiesEqual(
     return false;
   }
 
+  // avail[Left|Top|Width|Height](), height() and width() use
+  // text_scale_multiplier Note: similar to device_scale_factor,
+  // text_scale_multiplier is only used in select scenarios, but is unlikely to
+  // change and should not result in many false positives.
+  if (prev.text_scale_multiplier != current.text_scale_multiplier) {
+    return false;
+  }
+
   // avail[Left|Top|Width|Height]() use available_rect
   if (prev.available_rect != current.available_rect) {
     return false;
@@ -77,21 +82,6 @@ bool Screen::AreWebExposedScreenPropertiesEqual(
   // isExtended()
   if (prev.is_extended != current.is_extended) {
     return false;
-  }
-
-  if (RuntimeEnabledFeatures::CanvasHDREnabled()) {
-    // (red|green|blue)Primary(X|Y) and whitePoint(X|Y).
-    const auto& prev_dcs = prev.display_color_spaces;
-    const auto& current_dcs = current.display_color_spaces;
-    if (prev_dcs.GetPrimaries() != current_dcs.GetPrimaries()) {
-      return false;
-    }
-
-    // highDynamicRangeHeadroom.
-    if (prev_dcs.GetHDRMaxLuminanceRelative() !=
-        current_dcs.GetHDRMaxLuminanceRelative()) {
-      return false;
-    }
   }
 
   return true;
@@ -110,9 +100,18 @@ int Screen::width() const {
 }
 
 unsigned Screen::colorDepth() const {
-  if (!DomWindow())
-    return 0;
-  return base::saturated_cast<unsigned>(GetScreenInfo().depth);
+  // "If the user agent does not know the color depth or does not want to
+  // return it for privacy considerations, it should return 24."
+  //
+  // https://drafts.csswg.org/cssom-view/#dom-screen-colordepth
+  unsigned unknown_color_depth = 24u;
+
+  if (!DomWindow()) {
+    return unknown_color_depth;
+  }
+  return GetScreenInfo().depth == 0
+             ? unknown_color_depth
+             : base::saturated_cast<unsigned>(GetScreenInfo().depth);
 }
 
 unsigned Screen::pixelDepth() const {
@@ -149,7 +148,7 @@ void Screen::Trace(Visitor* visitor) const {
   Supplementable<Screen>::Trace(visitor);
 }
 
-const WTF::AtomicString& Screen::InterfaceName() const {
+const AtomicString& Screen::InterfaceName() const {
   return event_target_names::kScreen;
 }
 
@@ -158,11 +157,12 @@ ExecutionContext* Screen::GetExecutionContext() const {
 }
 
 bool Screen::isExtended() const {
-  if (!DomWindow())
+  if (!DomWindow()) {
     return false;
+  }
   auto* context = GetExecutionContext();
   if (!context->IsFeatureEnabled(
-          mojom::blink::PermissionsPolicyFeature::kWindowManagement)) {
+          network::mojom::PermissionsPolicyFeature::kWindowManagement)) {
     return false;
   }
 
@@ -177,6 +177,9 @@ gfx::Rect Screen::GetRect(bool available) const {
   gfx::Rect rect = available ? screen_info.available_rect : screen_info.rect;
   if (frame->GetSettings()->GetReportScreenSizeInPhysicalPixelsQuirk())
     return gfx::ScaleToRoundedRect(rect, screen_info.device_scale_factor);
+  if (frame->GetDocument() && frame->GetDocument()->TextScaleMetaTagPresent()) {
+    return gfx::ScaleToRoundedRect(rect, screen_info.text_scale_multiplier);
+  }
   return rect;
 }
 

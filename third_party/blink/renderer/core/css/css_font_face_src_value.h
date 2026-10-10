@@ -26,7 +26,6 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_FONT_FACE_SRC_VALUE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_FONT_FACE_SRC_VALUE_H_
 
-#include "base/memory/scoped_refptr.h"
 #include "base/task/single_thread_task_runner.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_value.h"
@@ -69,15 +68,17 @@ class CORE_EXPORT CSSFontFaceSrcValue : public CSSValue {
   void SetFormat(const String& format) { format_ = format; }
 
   /* Only supported technologies need to be listed here, as we can reject other
-   * font face source component values, hence remove SVG and incremental for
-   * now, compare https://drafts.csswg.org/css-fonts-4/#font-face-src-parsing */
+   * font face source component values, hence remove SVG for now, compare
+   * https://drafts.csswg.org/css-fonts-4/#font-face-src-parsing */
   enum class FontTechnology {
+    kTechnologyAvar2,
     kTechnologyFeaturesAAT,
     kTechnologyFeaturesOT,
     kTechnologyCOLRv0,
     kTechnologyCOLRv1,
     kTechnologySBIX,
     kTechnologyCDBT,
+    kTechnologyIncremental,
     kTechnologyVariations,
     kTechnologyPalettes,
     kTechnologyUnknown

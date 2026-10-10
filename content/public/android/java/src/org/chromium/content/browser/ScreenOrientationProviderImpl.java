@@ -11,8 +11,6 @@ import android.content.pm.PackageManager;
 import android.util.Pair;
 import android.view.Surface;
 
-import androidx.annotation.Nullable;
-
 import org.jni_zero.CalledByNative;
 import org.jni_zero.JNINamespace;
 
@@ -20,6 +18,8 @@ import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.ApplicationStatus.ActivityStateListener;
 import org.chromium.base.Log;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.content_public.browser.ScreenOrientationDelegate;
 import org.chromium.content_public.browser.ScreenOrientationProvider;
 import org.chromium.content_public.browser.WebContents;
@@ -32,10 +32,11 @@ import java.util.WeakHashMap;
 
 /** This is the implementation of the C++ counterpart ScreenOrientationProvider. */
 @JNINamespace("content")
+@NullMarked
 public class ScreenOrientationProviderImpl
         implements ActivityStateListener, ScreenOrientationProvider {
     private static class Holder {
-        private static ScreenOrientationProviderImpl sInstance =
+        private static final ScreenOrientationProviderImpl sInstance =
                 new ScreenOrientationProviderImpl();
     }
 
@@ -45,7 +46,7 @@ public class ScreenOrientationProviderImpl
     private static final boolean LOCK = true;
     private static final boolean UNLOCK = false;
 
-    private ScreenOrientationDelegate mDelegate;
+    private @Nullable ScreenOrientationDelegate mDelegate;
 
     /**
      * The keys of the map are the activities for which screen orientation are
@@ -53,7 +54,7 @@ public class ScreenOrientationProviderImpl
      * The values of the map are the most recent default web screen orientation request for each
      * activity.
      */
-    private Map<Activity, Byte> mDefaultOrientationOverrides = new WeakHashMap<>();
+    private final Map<Activity, Byte> mDefaultOrientationOverrides = new WeakHashMap<>();
 
     /**
      * The keys of the map are the activities for which screen orientation requests are
@@ -62,7 +63,7 @@ public class ScreenOrientationProviderImpl
      * The map will contain an entry with a null value if screen orientation requests are delayed
      * for an activity but no screen orientation requests have been made for the activity.
      */
-    private Map<Activity, Pair<Boolean, Integer>> mDelayedRequests = new WeakHashMap<>();
+    private final Map<Activity, Pair<Boolean, Integer>> mDelayedRequests = new WeakHashMap<>();
 
     private static final class PendingRequest implements WindowEventObserver {
         private final ScreenOrientationProviderImpl mProvider;
@@ -90,7 +91,7 @@ public class ScreenOrientationProviderImpl
         }
 
         @Override
-        public void onWindowAndroidChanged(WindowAndroid newWindowAndroid) {
+        public void onWindowAndroidChanged(@Nullable WindowAndroid newWindowAndroid) {
             if (newWindowAndroid == null) return;
 
             if (mLockOrUnlock) {
@@ -128,7 +129,7 @@ public class ScreenOrientationProviderImpl
             case ScreenOrientationLockType.LANDSCAPE:
                 return ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE;
             case ScreenOrientationLockType.ANY:
-                return ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR;
+                return ActivityInfo.SCREEN_ORIENTATION_FULL_USER;
             case ScreenOrientationLockType.NATURAL:
                 // If the tab is being reparented, we don't have a display strongly associated with
                 // it, so we get the default display.
@@ -222,13 +223,13 @@ public class ScreenOrientationProviderImpl
         // Note that we can't just use the focused activity, as that would lead to bugs where
         // unlockOrientation unlocks a different activity to the one that was locked.
         if (activity == null) return;
-        byte mDefaultWebOrientation = (byte) ScreenOrientationLockType.DEFAULT;
+        byte defaultWebOrientation = (byte) ScreenOrientationLockType.DEFAULT;
         if (mDefaultOrientationOverrides.containsKey(activity)) {
-            mDefaultWebOrientation = mDefaultOrientationOverrides.get(activity);
+            defaultWebOrientation = mDefaultOrientationOverrides.get(activity);
         }
 
         int defaultOrientation =
-                getOrientationFromWebScreenOrientations(mDefaultWebOrientation, window, activity);
+                getOrientationFromWebScreenOrientations(defaultWebOrientation, window, activity);
 
         try {
             if (defaultOrientation == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
@@ -278,7 +279,7 @@ public class ScreenOrientationProviderImpl
     }
 
     @Override
-    public void setOrientationDelegate(ScreenOrientationDelegate delegate) {
+    public void setOrientationDelegate(@Nullable ScreenOrientationDelegate delegate) {
         mDelegate = delegate;
     }
 

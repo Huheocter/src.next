@@ -43,10 +43,11 @@ BlockContentAlignment ComputeContentAlignment(const ComputedStyle& style,
 
   if (use_counter) {
     if (!behave_like_table_cell) {
-      if (position != ContentPosition::kNormal &&
-          position != ContentPosition::kStart &&
-          position != ContentPosition::kBaseline &&
-          position != ContentPosition::kFlexStart) {
+      if (position != ContentPosition::kBaseline &&
+          position != ContentPosition::kFlexStart &&
+          position != ContentPosition::kFlowStart &&
+          position != ContentPosition::kNormal &&
+          position != ContentPosition::kStart) {
         UseCounter::Count(*use_counter,
                           WebFeature::kEffectiveAlignContentForBlock);
       }
@@ -71,6 +72,7 @@ BlockContentAlignment ComputeContentAlignment(const ComputedStyle& style,
 
     case ContentPosition::kEnd:
     case ContentPosition::kFlexEnd:
+    case ContentPosition::kFlowEnd:
       return is_safe ? BlockContentAlignment::kSafeEnd
                      : BlockContentAlignment::kUnsafeEnd;
 
@@ -82,7 +84,6 @@ BlockContentAlignment ComputeContentAlignment(const ComputedStyle& style,
         case EVerticalAlign::kTop:
           // Do nothing for 'top' vertical alignment.
           return BlockContentAlignment::kStart;
-
         case EVerticalAlign::kBaselineMiddle:
         case EVerticalAlign::kSub:
         case EVerticalAlign::kSuper:
@@ -93,17 +94,16 @@ BlockContentAlignment ComputeContentAlignment(const ComputedStyle& style,
           // table-cell vertical alignment.
         case EVerticalAlign::kBaseline:
           return BlockContentAlignment::kBaseline;
-
         case EVerticalAlign::kMiddle:
-          return BlockContentAlignment::kUnsafeCenter;
-
+          return BlockContentAlignment::kSafeCenter;
         case EVerticalAlign::kBottom:
-          return BlockContentAlignment::kUnsafeEnd;
+          return BlockContentAlignment::kSafeEnd;
       }
       break;
 
-    case ContentPosition::kStart:
     case ContentPosition::kFlexStart:
+    case ContentPosition::kFlowStart:
+    case ContentPosition::kStart:
       return BlockContentAlignment::kStart;
 
     case ContentPosition::kBaseline:
@@ -128,7 +128,7 @@ LayoutUnit CalculateOutOfFlowStaticInlineLevelOffset(
 
   // Find a layout opportunity, where we would have placed a zero-sized line.
   LayoutOpportunity opportunity = exclusion_space.FindLayoutOpportunity(
-      origin_bfc_offset, child_available_inline_size);
+      origin_bfc_offset, child_available_inline_size, direction);
 
   LayoutUnit child_line_offset = IsLtr(direction)
                                      ? opportunity.rect.LineStartOffset()
@@ -153,8 +153,11 @@ LayoutUnit CalculateOutOfFlowStaticInlineLevelOffset(
     inline_offset += opportunity.rect.InlineSize() - line_offset;
 
   // Adjust for the text-indent.
-  inline_offset += MinimumValueForLength(container_style.TextIndent(),
-                                         child_available_inline_size);
+  const Length& text_indent = container_style.TextIndent();
+  if (!text_indent.IsZero() && !container_style.IsTextIndentHanging()) {
+    inline_offset +=
+        MinimumValueForLength(text_indent, child_available_inline_size);
+  }
 
   return inline_offset;
 }
@@ -193,7 +196,8 @@ void AlignBlockContent(const ComputedStyle& style,
     if (builder.Node().IsButtonOrInputButton()) {
       free_space = free_space.ClampNegativeToZero();
     }
-    builder.MoveChildrenInBlockDirection(free_space / 2);
+    builder.MoveChildrenInDirection(free_space / 2,
+                                    /*is_block_direction=*/true);
     return;
   }
 
@@ -216,11 +220,109 @@ void AlignBlockContent(const ComputedStyle& style,
       break;
     case BlockContentAlignment::kSafeCenter:
     case BlockContentAlignment::kUnsafeCenter:
-      builder.MoveChildrenInBlockDirection(free_space / 2);
+      builder.MoveChildrenInDirection(free_space / 2,
+                                      /*is_block_direction=*/true);
       break;
     case BlockContentAlignment::kSafeEnd:
     case BlockContentAlignment::kUnsafeEnd:
-      builder.MoveChildrenInBlockDirection(free_space);
+      builder.MoveChildrenInDirection(free_space, /*is_block_direction=*/true);
+  }
+}
+
+LogicalStaticPosition::InlineEdge InlineStaticPositionEdge(
+    const BlockNode& oof_node,
+    const ComputedStyle* justify_items_style,
+    WritingDirectionMode parent_writing_direction,
+    bool should_swap_inline_axis) {
+  CHECK(oof_node.IsOutOfFlowPositioned());
+  StyleSelfAlignmentData normal_value_behavior = {ItemPosition::kStart,
+                                                  OverflowAlignment::kDefault};
+  const ItemPosition align_self =
+      oof_node.Style()
+          .ResolvedJustifySelf(normal_value_behavior, justify_items_style)
+          .GetPosition();
+
+  switch (align_self) {
+    case ItemPosition::kEnd:
+    case ItemPosition::kFlexEnd:
+    case ItemPosition::kFlowEnd:
+    case ItemPosition::kLastBaseline:
+    case ItemPosition::kRight: {
+      return should_swap_inline_axis ? LogicalStaticPosition::kInlineStart
+                                     : LogicalStaticPosition::kInlineEnd;
+    }
+    case ItemPosition::kAnchorCenter:
+    case ItemPosition::kCenter:
+      return LogicalStaticPosition::kInlineCenter;
+    case ItemPosition::kBaseline:
+    case ItemPosition::kFlexStart:
+    case ItemPosition::kFlowStart:
+    case ItemPosition::kLeft:
+    case ItemPosition::kStart:
+    case ItemPosition::kStretch: {
+      return should_swap_inline_axis ? LogicalStaticPosition::kInlineEnd
+                                     : LogicalStaticPosition::kInlineStart;
+    }
+    case ItemPosition::kSelfEnd:
+    case ItemPosition::kSelfStart: {
+      LogicalToLogical<LogicalStaticPosition::InlineEdge> logical(
+          oof_node.Style().GetWritingDirection(), parent_writing_direction,
+          LogicalStaticPosition::kInlineStart,
+          LogicalStaticPosition::kInlineEnd,
+          LogicalStaticPosition::kInlineStart,
+          LogicalStaticPosition::kInlineEnd);
+      return (align_self == ItemPosition::kSelfStart) ? logical.InlineStart()
+                                                      : logical.InlineEnd();
+    }
+    case ItemPosition::kAuto:
+    case ItemPosition::kLegacy:
+    case ItemPosition::kNormal:
+      NOTREACHED();
+  }
+}
+
+LogicalStaticPosition::BlockEdge BlockStaticPositionEdge(
+    const BlockNode& oof_node,
+    const ComputedStyle* align_items_style,
+    WritingDirectionMode parent_writing_direction) {
+  CHECK(oof_node.IsOutOfFlowPositioned());
+  StyleSelfAlignmentData normal_value_behavior = {ItemPosition::kStart,
+                                                  OverflowAlignment::kDefault};
+  const ItemPosition align_self =
+      oof_node.Style()
+          .ResolvedAlignSelf(normal_value_behavior, align_items_style)
+          .GetPosition();
+
+  switch (align_self) {
+    case ItemPosition::kEnd:
+    case ItemPosition::kFlexEnd:
+    case ItemPosition::kFlowEnd:
+    case ItemPosition::kLastBaseline:
+      return LogicalStaticPosition::kBlockEnd;
+    case ItemPosition::kAnchorCenter:
+    case ItemPosition::kCenter:
+      return LogicalStaticPosition::kBlockCenter;
+    case ItemPosition::kBaseline:
+    case ItemPosition::kFlexStart:
+    case ItemPosition::kFlowStart:
+    case ItemPosition::kStart:
+    case ItemPosition::kStretch:
+      return LogicalStaticPosition::kBlockStart;
+    case ItemPosition::kSelfEnd:
+    case ItemPosition::kSelfStart: {
+      LogicalToLogical<LogicalStaticPosition::BlockEdge> logical(
+          oof_node.Style().GetWritingDirection(), parent_writing_direction,
+          LogicalStaticPosition::kBlockStart, LogicalStaticPosition::kBlockEnd,
+          LogicalStaticPosition::kBlockStart, LogicalStaticPosition::kBlockEnd);
+      return (align_self == ItemPosition::kSelfStart) ? logical.BlockStart()
+                                                      : logical.BlockEnd();
+    }
+    case ItemPosition::kAuto:
+    case ItemPosition::kLeft:
+    case ItemPosition::kRight:
+    case ItemPosition::kLegacy:
+    case ItemPosition::kNormal:
+      NOTREACHED();
   }
 }
 

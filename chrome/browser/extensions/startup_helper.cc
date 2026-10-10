@@ -14,13 +14,15 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/initialize_extensions_client.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/extension_file_task_runner.h"
 #include "extensions/browser/sandboxed_unpacker.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/verifier_formats.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using content::BrowserThread;
 
@@ -28,15 +30,13 @@ namespace extensions {
 
 namespace {
 
-void PrintPackExtensionMessage(const std::string& message) {
+void PrintPackExtensionMessage(const std::u16string& message) {
   VLOG(1) << message;
 }
 
 }  // namespace
 
-StartupHelper::StartupHelper() {
-  EnsureExtensionsClientInitialized();
-}
+StartupHelper::StartupHelper() = default;
 
 StartupHelper::~StartupHelper() = default;
 
@@ -44,20 +44,18 @@ void StartupHelper::OnPackSuccess(
     const base::FilePath& crx_path,
     const base::FilePath& output_private_key_path) {
   pack_job_succeeded_ = true;
-  PrintPackExtensionMessage(
-      base::UTF16ToUTF8(
-          PackExtensionJob::StandardSuccessMessage(crx_path,
-                                                   output_private_key_path)));
+  PrintPackExtensionMessage(PackExtensionJob::StandardSuccessMessage(
+      crx_path, output_private_key_path));
 }
 
-void StartupHelper::OnPackFailure(const std::string& error_message,
+void StartupHelper::OnPackFailure(const std::u16string& error_message,
                                   ExtensionCreator::ErrorType type) {
   error_message_ = error_message;
   PrintPackExtensionMessage(error_message);
 }
 
 bool StartupHelper::PackExtension(const base::CommandLine& cmd_line,
-                                  std::string* error) {
+                                  std::u16string* error) {
   if (!cmd_line.HasSwitch(::switches::kPackExtension))
     return false;
 
@@ -107,14 +105,14 @@ class ValidateCrxHelper : public SandboxedUnpackerClient {
   }
 
  protected:
-  ~ValidateCrxHelper() override {}
+  ~ValidateCrxHelper() override = default;
 
   void OnUnpackSuccess(const base::FilePath& temp_dir,
                        const base::FilePath& extension_root,
-                       std::unique_ptr<base::Value::Dict> original_manifest,
+                       std::unique_ptr<base::DictValue> original_manifest,
                        const Extension* extension,
                        const SkBitmap& install_icon,
-                       base::Value::Dict ruleset_install_prefs) override {
+                       base::DictValue ruleset_install_prefs) override {
     DCHECK(GetExtensionFileTaskRunner()->RunsTasksInCurrentSequence());
     success_ = true;
     content::GetUIThreadTaskRunner({})->PostTask(

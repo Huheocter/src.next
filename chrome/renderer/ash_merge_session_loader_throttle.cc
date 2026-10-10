@@ -6,9 +6,9 @@
 
 #include <utility>
 
+#include "ash/constants/ash_switches.h"
 #include "base/command_line.h"
 #include "base/functional/bind.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/renderer/chrome_render_thread_observer.h"
 #include "components/google/core/common/google_util.h"
 #include "net/url_request/redirect_info.h"
@@ -43,7 +43,7 @@ bool ShouldDelayUrl(const GURL& url) {
 // static
 base::TimeDelta AshMergeSessionLoaderThrottle::GetMergeSessionTimeout() {
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kShortMergeSessionTimeoutForTest)) {
+          ash::switches::kShortMergeSessionTimeoutForTest)) {
     return base::Seconds(1);
   } else {
     return base::Seconds(20);
@@ -90,9 +90,7 @@ void AshMergeSessionLoaderThrottle::WillRedirectRequest(
     net::RedirectInfo* redirect_info,
     const network::mojom::URLResponseHead& /* response_head */,
     bool* defer,
-    std::vector<std::string>* to_be_removed_headers,
-    net::HttpRequestHeaders* modified_headers,
-    net::HttpRequestHeaders* modified_cors_exempt_headers) {
+    network::HttpRequestHeadersUpdateParams* headers_update_params) {
   if (is_xhr_ && redirect_info->new_url.SchemeIsHTTPOrHTTPS() &&
       MaybeDeferForMergeSession(
           redirect_info->new_url,

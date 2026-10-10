@@ -1,11 +1,12 @@
 // Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
 import 'chrome://resources/cr_elements/cr_menu_selector/cr_menu_selector.js';
 import 'chrome://resources/cr_elements/cr_ripple/cr_ripple.js';
 import './icons.html.js';
 
-import type {CrMenuSelector} from 'chrome://resources/cr_elements/cr_menu_selector/cr_menu_selector.js';
+import type {CrMenuSelectorElement} from 'chrome://resources/cr_elements/cr_menu_selector/cr_menu_selector.js';
 import {I18nMixinLit} from 'chrome://resources/cr_elements/i18n_mixin_lit.js';
 import {assert} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
@@ -18,7 +19,7 @@ import {getHtml} from './sidebar.html.js';
 
 export interface ExtensionsSidebarElement {
   $: {
-    sectionMenu: CrMenuSelector,
+    sectionMenu: CrMenuSelectorElement,
     sectionsExtensions: HTMLElement,
     sectionsShortcuts: HTMLElement,
     sectionsSitePermissions: HTMLElement,
@@ -44,6 +45,7 @@ export class ExtensionsSidebarElement extends ExtensionsSidebarElementBase {
   static override get properties() {
     return {
       enableEnhancedSiteControls: {type: Boolean},
+      inDevMode: {type: Boolean},
 
       /**
        * The data path/page that identifies the entry to be selected in the
@@ -51,24 +53,21 @@ export class ExtensionsSidebarElement extends ExtensionsSidebarElementBase {
        * displayed.
        */
       selectedPath_: {type: String},
+      webuiRoundedIconsEnabled_: {type: Boolean},
     };
   }
 
-  enableEnhancedSiteControls: boolean = false;
-  protected selectedPath_: Page = Page.LIST;
+  accessor enableEnhancedSiteControls: boolean = false;
+  protected accessor selectedPath_: Page = Page.LIST;
+  protected accessor webuiRoundedIconsEnabled_: boolean =
+      loadTimeData.getBoolean('webuiRoundedIconsEnabled');
+  accessor inDevMode: boolean = false;
 
   /**
    * The ID of the listener on |navigation|. Stored so that the
    * listener can be removed when this element is detached (happens in tests).
    */
   private navigationListener_: number|null = null;
-
-  override firstUpdated(changedProperties: PropertyValues<this>) {
-    super.firstUpdated(changedProperties);
-
-    this.setAttribute('role', 'navigation');
-    this.computeSelectedPath_(navigation.getCurrentPage().page);
-  }
 
   override connectedCallback() {
     super.connectedCallback();
@@ -82,6 +81,13 @@ export class ExtensionsSidebarElement extends ExtensionsSidebarElementBase {
     assert(this.navigationListener_);
     assert(navigation.removeListener(this.navigationListener_));
     this.navigationListener_ = null;
+  }
+
+  override firstUpdated(changedProperties: PropertyValues<this>) {
+    super.firstUpdated(changedProperties);
+
+    this.setAttribute('role', 'navigation');
+    this.computeSelectedPath_(navigation.getCurrentPage().page);
   }
 
   private computeSelectedPath_(page: Page) {
@@ -101,7 +107,7 @@ export class ExtensionsSidebarElement extends ExtensionsSidebarElementBase {
   protected onLinkClick_(e: Event) {
     e.preventDefault();
     navigation.navigateTo(
-        {page: ((e.target as HTMLElement).dataset['path'] as Page)});
+        {page: ((e.currentTarget as HTMLElement).dataset['path'] as Page)});
     this.fire('close-drawer');
   }
 
@@ -116,6 +122,14 @@ export class ExtensionsSidebarElement extends ExtensionsSidebarElementBase {
       tags: ['a'],
       attrs: ['target'],
       substitutions: [loadTimeData.getString('getMoreExtensionsUrl')],
+    });
+  }
+
+  protected computeModernWebGuidancePromoText_(): TrustedHTML {
+    return this.i18nAdvanced('sidebarDocsPromo', {
+      tags: ['a'],
+      attrs: ['target'],
+      substitutions: [loadTimeData.getString('modernWebGuidanceURL')],
     });
   }
 }

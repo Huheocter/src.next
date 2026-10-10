@@ -11,7 +11,9 @@ import android.view.View.OnClickListener;
 
 import androidx.annotation.IntDef;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.tab.state.ShoppingPersistedTabData;
+import org.chromium.chrome.browser.tasks.tab_management.TabSwitcherMessageManager.MessageType;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
@@ -19,6 +21,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
 /** List of properties used by TabGridSecondaryItem. */
+@NullMarked
 class MessageCardViewProperties {
     /** An enum interface to specify where the message card can be shown. */
     @IntDef({MessageCardScope.REGULAR, MessageCardScope.INCOGNITO, MessageCardScope.BOTH})
@@ -32,9 +35,9 @@ class MessageCardViewProperties {
         int BOTH = 2;
     }
 
-    /** This corresponds to the {@link MessageService.MessageType}. */
-    public static final PropertyModel.ReadableIntPropertyKey MESSAGE_TYPE =
-            new PropertyModel.ReadableIntPropertyKey();
+    /** This corresponds to the {@link MessageType}. */
+    public static final PropertyModel.WritableIntDefPropertyKey<MessageType> MESSAGE_TYPE =
+            new PropertyModel.WritableIntDefPropertyKey<>(MessageType.ALL);
 
     // Identifier is the subtype of message. For example, the message with type PRICE_MESSAGE may
     // have the identifier PRICE_WELCOME or PRICE_ALERTS.
@@ -48,19 +51,16 @@ class MessageCardViewProperties {
             new PropertyModel.WritableObjectPropertyKey<>();
     public static final PropertyModel.WritableObjectPropertyKey<MessageCardView.IconProvider>
             ICON_PROVIDER = new PropertyModel.WritableObjectPropertyKey<>();
-    public static final PropertyModel.WritableObjectPropertyKey<
-                    MessageCardView.ReviewActionProvider>
+    public static final PropertyModel.WritableObjectPropertyKey<MessageCardView.ActionProvider>
             UI_ACTION_PROVIDER = new PropertyModel.WritableObjectPropertyKey<>();
-    public static final PropertyModel.WritableObjectPropertyKey<
-                    MessageCardView.DismissActionProvider>
+    public static final PropertyModel.WritableObjectPropertyKey<MessageCardView.ActionProvider>
             UI_DISMISS_ACTION_PROVIDER = new PropertyModel.WritableObjectPropertyKey<>();
     public static final PropertyModel.WritableObjectPropertyKey<OnClickListener>
             SECONDARY_ACTION_BUTTON_CLICK_HANDLER = new PropertyModel.WritableObjectPropertyKey<>();
-    public static final PropertyModel.WritableObjectPropertyKey<
-                    MessageCardView.ReviewActionProvider>
+    public static final PropertyModel.WritableObjectPropertyKey<MessageCardView.ActionProvider>
             MESSAGE_SERVICE_ACTION_PROVIDER = new PropertyModel.WritableObjectPropertyKey<>();
     public static final PropertyModel.WritableObjectPropertyKey<
-                    MessageCardView.DismissActionProvider>
+                    MessageCardView.ServiceDismissActionProvider<@MessageType Integer>>
             MESSAGE_SERVICE_DISMISS_ACTION_PROVIDER =
                     new PropertyModel.WritableObjectPropertyKey<>();
     public static final PropertyModel.WritableObjectPropertyKey<String>
@@ -85,13 +85,27 @@ class MessageCardViewProperties {
             new PropertyModel.WritableBooleanPropertyKey();
 
     /** By default, if nothing is specified, regular is assumed. */
-    public static final PropertyModel.ReadableIntPropertyKey
+    public static final PropertyModel.WritableIntDefPropertyKey<MessageCardScope>
             MESSAGE_CARD_VISIBILITY_CONTROL_IN_REGULAR_AND_INCOGNITO_MODE =
-                    new PropertyModel.ReadableIntPropertyKey();
+                    new PropertyModel.WritableIntDefPropertyKey<>(MessageCardScope.REGULAR);
 
     // TODO(crbug.com/40731056): Change to a more general property CUSTOM_INFO_OBJECT
     public static final PropertyModel.WritableObjectPropertyKey<ShoppingPersistedTabData.PriceDrop>
             PRICE_DROP = new PropertyModel.WritableObjectPropertyKey<>();
+
+    /**
+     * By default, {@code @dimen/tab_list_selected_margin} margin is applied on all sides. Following
+     * properties can be used to override the specific side margins.
+     */
+    public static final PropertyModel.WritableIntPropertyKey TOP_MARGIN_OVERRIDE_PX =
+            new PropertyModel.WritableIntPropertyKey();
+
+    public static final PropertyModel.WritableIntPropertyKey BOTTOM_MARGIN_OVERRIDE_PX =
+            new PropertyModel.WritableIntPropertyKey();
+    public static final PropertyModel.WritableIntPropertyKey LEFT_MARGIN_OVERRIDE_PX =
+            new PropertyModel.WritableIntPropertyKey();
+    public static final PropertyModel.WritableIntPropertyKey RIGHT_MARGIN_OVERRIDE_PX =
+            new PropertyModel.WritableIntPropertyKey();
 
     public static final PropertyKey[] ALL_KEYS =
             new PropertyKey[] {
@@ -119,6 +133,10 @@ class MessageCardViewProperties {
                 MESSAGE_CARD_VISIBILITY_CONTROL_IN_REGULAR_AND_INCOGNITO_MODE,
                 PRICE_DROP,
                 VIEW_AS_ACTION_BUTTON,
-                ACTION_BUTTON_VISIBLE
+                ACTION_BUTTON_VISIBLE,
+                TOP_MARGIN_OVERRIDE_PX,
+                BOTTOM_MARGIN_OVERRIDE_PX,
+                LEFT_MARGIN_OVERRIDE_PX,
+                RIGHT_MARGIN_OVERRIDE_PX
             };
 }

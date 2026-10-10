@@ -26,6 +26,7 @@
 #include "third_party/blink/renderer/core/layout/layout_text.h"
 #include "third_party/blink/renderer/core/style/content_data.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
+#include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 namespace blink {
 
@@ -45,19 +46,24 @@ class LayoutCounter : public LayoutText {
     return counter_->Identifier();
   }
 
+  // Generates and returns counter text based on computed counter values
+  // and list separators.
+  static String GenerateCounterText(Vector<int> counter_values,
+                                    const CounterStyle* counter_style,
+                                    const AtomicString& separator);
+  // Calls GenerateCounterText to update counter text.
   void UpdateCounter(Vector<int> counter_values);
 
-  // Returns true if <counter-style> is "disclosure-open" or
-  // "disclosure-closed".
+  // Returns true if `<counter-style>` is `disclosure-open` or
+  // `disclosure-closed`, or resolves to one of them through `extends`.
   bool IsDirectionalSymbolMarker() const;
   // Returns <string> in counters().
   const AtomicString& Separator() const;
 
-  // Returns LayoutCounter::counter_->ListStyle() if `object` is a
-  // LayoutCounter.
-  // Returns style.ListStyleType()->GetCounterStyleName() otherwise.
-  static const AtomicString& ListStyle(const LayoutObject* object,
-                                       const ComputedStyle& style);
+  // Returns the list style name for `object`/`style`, resolving through
+  // `extends` to the base predefined symbol marker name when applicable.
+  static AtomicString ListStyle(const LayoutObject* object,
+                                const ComputedStyle& style);
 
   const char* GetName() const override {
     NOT_DESTROYED();
@@ -65,7 +71,7 @@ class LayoutCounter : public LayoutText {
   }
 
  protected:
-  void WillBeDestroyed() override;
+  void WillBeDestroyed(const ComputedStyle*) override;
 
  private:
   bool IsCounter() const final {

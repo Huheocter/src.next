@@ -5,29 +5,40 @@
 #ifndef CHROME_BROWSER_UI_BROWSER_COMMAND_CONTROLLER_H_
 #define CHROME_BROWSER_UI_BROWSER_COMMAND_CONTROLLER_H_
 
-#include "base/gtest_prod_util.h"
+#include <memory>
+#include <optional>
+
+#include "base/containers/flat_map.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/command_updater.h"
 #include "chrome/browser/command_updater_delegate.h"
 #include "chrome/browser/command_updater_impl.h"
+#include "chrome/browser/ui/side_panel/side_panel_enums.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "chrome/browser/ui/webui/side_panel/customize_chrome/customize_chrome_section.h"
+#include "chrome/common/buildflags.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_member.h"
 #include "components/sessions/core/tab_restore_service_observer.h"
-#include "content/public/browser/web_contents_observer.h"
 #include "ui/actions/actions.h"
+#include "ui/base/unowned_user_data/scoped_unowned_user_data.h"
 #include "ui/base/window_open_disposition.h"
 
-class Browser;
 class BrowserWindow;
+class BrowserWindowInterface;
 class Profile;
+enum class TabChangeType;
 
 namespace input {
 struct NativeWebKeyboardEvent;
 }
+
+namespace glic {
+class GlicInstance;
+}
+
 
 namespace chrome {
 
@@ -35,10 +46,17 @@ namespace chrome {
 // it implements CommandUpdater as the public API for it (so it's not directly
 // exposed).
 class BrowserCommandController : public CommandUpdater,
+                                 public CommandUpdaterDelegate,
                                  public TabStripModelObserver,
                                  public sessions::TabRestoreServiceObserver {
  public:
-  explicit BrowserCommandController(Browser* browser);
+  DECLARE_USER_DATA(BrowserCommandController);
+
+  static BrowserCommandController* From(BrowserWindowInterface* browser);
+  static const BrowserCommandController* From(
+      const BrowserWindowInterface* browser);
+
+  explicit BrowserCommandController(BrowserWindowInterface* bwi);
 
   BrowserCommandController(const BrowserCommandController&) = delete;
   BrowserCommandController& operator=(const BrowserCommandController&) = delete;
@@ -64,28 +82,34 @@ class BrowserCommandController : public CommandUpdater,
   // prevent changing the state of enabled shortcuts while in this mode (so the
   // other *Changed() functions will be a NO-OP in this state).
   void LockedFullscreenStateChanged();
+
+  // Enables or disables all tab switching commands (IDC_SELECT_NEXT_TAB,
+  // IDC_SELECT_PREVIOUS_TAB, IDC_CYCLE_*, IDC_SELECT_TAB_0..7, etc.).
+  void SetTabSwitchCommandsEnabled(bool enabled);
 #endif
   void PrintingStateChanged();
+  void GlicActiveInstanceChanged(glic::GlicInstance* instance);
   void LoadingStateChanged(bool is_loading, bool force);
   void FindBarVisibilityChanged();
   void ExtensionStateChanged();
   void TabKeyboardFocusChangedTo(std::optional<int> index);
   void WebContentsFocusChanged();
 
+  // Helper method to show the customize chrome sidepanel and optionally scroll
+  // to a specific section.
+  void ShowCustomizeChromeSidePanel(
+      SidePanelOpenTrigger trigger,
+      std::optional<CustomizeChromeSection> section = std::nullopt);
+
   // Overriden from CommandUpdater:
   bool SupportsCommand(int id) const override;
   bool IsCommandEnabled(int id) const override;
-  bool ExecuteCommand(
-      int id,
-      base::TimeTicks time_stamp = base::TimeTicks::Now()) override;
-  bool ExecuteCommandWithDisposition(
-      int id,
-      WindowOpenDisposition disposition,
-      base::TimeTicks time_stamp = base::TimeTicks::Now()) override;
   void AddCommandObserver(int id, CommandObserver* observer) override;
   void RemoveCommandObserver(int id, CommandObserver* observer) override;
   void RemoveCommandObserver(CommandObserver* observer) override;
   bool UpdateCommandEnabled(int id, bool state) override;
+  void DisableAllCommands() override;
+  std::vector<int> GetAllIds() const override;
 
   // Shared state updating: these functions are static and public to share with
   // outside code.
@@ -97,17 +121,38 @@ class BrowserCommandController : public CommandUpdater,
       Profile* profile);
 
  private:
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   friend class BrowserCommandControllerBrowserTestLockedFullscreen;
 #endif
+
+  // CommandUpdater:
+  bool ExecuteCommandWithDispositionAndContext(
+      int id,
+      WindowOpenDisposition disposition,
+      std::optional<actions::ActionInvocationContext> context,
+      base::TimeTicks time_stamp) override;
+
+  // CommandUpdaterDelegate:
+  void HandleCommandWithDisposition(int id,
+                                    WindowOpenDisposition disposition,
+                                    base::TimeTicks time_stamp) override;
 
   // Overridden from TabStripModelObserver:
   void OnTabStripModelChanged(
       TabStripModel* tab_strip_model,
       const TabStripModelChange& change,
       const TabStripSelectionChange& selection) override;
-  void TabBlockedStateChanged(content::WebContents* contents,
+  void TabGroupedStateChanged(TabStripModel* tab_strip_model,
+                              std::optional<tab_groups::TabGroupId> old_group,
+                              std::optional<tab_groups::TabGroupId> new_group,
+                              tabs::TabInterface* tab,
                               int index) override;
+  void OnTabChangedAt(tabs::TabInterface* tab,
+                      TabChangeType change_type) override;
+  void OnTabPinnedStateChanged(tabs::TabInterface* tab, int index) override;
+  void OnTabGroupFocusChanged(
+      std::optional<tab_groups::TabGroupId> new_focused_group,
+      std::optional<tab_groups::TabGroupId> old_focused_group) override;
 
   // Overridden from TabRestoreServiceObserver:
   void TabRestoreServiceChanged(sessions::TabRestoreService* service) override;
@@ -168,10 +213,16 @@ class BrowserCommandController : public CommandUpdater,
   // Update commands whose state depends on whether the window is in locked
   // fullscreen mode or not.
   void UpdateCommandsForLockedFullscreenMode();
+
+  // Updates command states for tab switching commands.
+  void UpdateTabSwitchingCommandState();
 #endif
 
   // Updates the printing command state.
   void UpdatePrintingState();
+
+  // Updates the Glic command state.
+  void UpdateGlicState();
 
   // Updates the SHOW_SYNC_SETUP menu entry.
   void OnSigninAllowedPrefChange();
@@ -206,39 +257,60 @@ class BrowserCommandController : public CommandUpdater,
   // Updates commands that depend on the state of the tab strip model.
   void UpdateCommandsForTabStripStateChanged();
 
-  // Returns the relevant action for the current browser for a given
-  // `action_id`.
-  actions::ActionItem* FindAction(actions::ActionId action_id);
+  // Updates commands that depend on the enabled state of glic.
+  void UpdateCommandsForEnableGlicChanged();
 
-  // Updates the enabled status for both `command_id` and `action_id`, given
-  // that it exists.
+  // Updates commands and actions that depend on tab group focus state.
+  void UpdateCommandsForTabGroupFocusChanged();
+
   void UpdateCommandAndActionEnabled(int command_id,
                                      actions::ActionId action_id,
                                      bool enabled);
 
-  // Helper method to show the customize chrome sidepanel and optionally scroll
-  // to a specific section.
-  void ShowCustomizeChromeSidePanel(
-      std::optional<CustomizeChromeSection> section = std::nullopt);
+  // Returns true if the browser is in locked fullscreen mode. If `allow_ontask`
+  // is true, returns false when the browser is locked for `OnTask`.
+  //
+  // Always returns false on non ChromeOS platforms.
+  bool IsInLockedFullscreenMode(bool allow_ontask) const;
 
-  inline BrowserWindow* window();
-  inline Profile* profile();
+  std::unique_ptr<CommandUpdater> CreateCommandUpdater();
 
-  const raw_ptr<Browser> browser_;
+  BrowserWindow* window();
+  Profile* profile();
 
-  // The CommandUpdaterImpl that manages the browser window commands.
-  CommandUpdaterImpl command_updater_;
+  const raw_ptr<BrowserWindowInterface> browser_;
+
+  // The CommandUpdater that manages the browser window commands
+  // and optionally syncs state to ActionItems.
+  std::unique_ptr<CommandUpdater> command_updater_;
 
   PrefChangeRegistrar profile_pref_registrar_;
   PrefChangeRegistrar local_pref_registrar_;
+  std::unique_ptr<base::CallbackListSubscription> glic_enabling_subscription_;
 
+#if BUILDFLAG(IS_CHROMEOS)
   // In locked fullscreen mode disallow enabling/disabling commands.
+  // TODO(crbug.com/438540029): Remove `is_locked_fullscreen_` when migration
+  // is completed.
   bool is_locked_fullscreen_ = false;
+  bool is_tab_switching_enabled_ = true;
+#endif
 
   // If the Customize Chrome side panel is shown, determines which section to
   // display.
   CustomizeChromeSection customize_chrome_section_ =
       CustomizeChromeSection::kUnspecified;
+
+  // Callback subscription for listening to changes to the Glic window
+  // activation changes.
+  base::CallbackListSubscription glic_active_instance_changed_subscription_;
+  // Observes for extension state changes (load/unload).
+  class ExtensionStateObserver;
+  std::unique_ptr<ExtensionStateObserver> extension_state_observer_;
+
+  ui::ScopedUnownedUserData<BrowserCommandController> scoped_unowned_user_data_;
+
+  base::WeakPtrFactory<BrowserCommandController> weak_ptr_factory_{this};
 };
 
 }  // namespace chrome

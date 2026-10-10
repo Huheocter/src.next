@@ -5,13 +5,17 @@
 #include "base/functional/bind.h"
 #include "chrome/browser/extensions/chrome_content_browser_client_extensions_part.h"
 #include "components/guest_view/buildflags/buildflags.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/service_worker_version_base_info.h"
+#include "extensions/browser/api/web_request/extension_web_request_event_router.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/renderer_startup_helper.h"
 #include "extensions/browser/service_worker/service_worker_host.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/mojom/event_router.mojom.h"
 #include "extensions/common/mojom/renderer_host.mojom.h"
+#include "extensions/common/mojom/web_request_host.mojom.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -24,6 +28,8 @@
 #include "extensions/common/mojom/guest_view.mojom.h"
 #endif
 
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
+
 namespace extensions {
 
 void ChromeContentBrowserClientExtensionsPart::ExposeInterfacesToRenderer(
@@ -32,6 +38,10 @@ void ChromeContentBrowserClientExtensionsPart::ExposeInterfacesToRenderer(
     content::RenderProcessHost* host) {
   associated_registry->AddInterface<mojom::RendererHost>(base::BindRepeating(
       &RendererStartupHelper::BindForRenderer, host->GetID()));
+  // TODO(crbug.com/494684626): Move API-specific bindings out of core
+  // extensions code and into //extensions or a dedicated API glue layer.
+  associated_registry->AddInterface<mojom::WebRequestHost>(base::BindRepeating(
+      &WebRequestEventRouter::BindForRenderer, host->GetID()));
 }
 
 void ChromeContentBrowserClientExtensionsPart::
@@ -39,13 +49,15 @@ void ChromeContentBrowserClientExtensionsPart::
         const content::ServiceWorkerVersionBaseInfo&
             service_worker_version_info,
         blink::AssociatedInterfaceRegistry& associated_registry) {
-  CHECK(service_worker_version_info.process_id !=
-        content::ChildProcessHost::kInvalidUniqueID);
+  CHECK(service_worker_version_info.process_id);
   associated_registry.AddInterface<mojom::RendererHost>(
       base::BindRepeating(&RendererStartupHelper::BindForRenderer,
                           service_worker_version_info.process_id));
   associated_registry.AddInterface<mojom::ServiceWorkerHost>(
       base::BindRepeating(&ServiceWorkerHost::BindReceiver,
+                          service_worker_version_info.process_id));
+  associated_registry.AddInterface<mojom::WebRequestHost>(
+      base::BindRepeating(&WebRequestEventRouter::BindForRenderer,
                           service_worker_version_info.process_id));
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   associated_registry.AddInterface<mojom::RendererAutomationRegistry>(
@@ -60,7 +72,7 @@ void ChromeContentBrowserClientExtensionsPart::
     ExposeInterfacesToRendererForRenderFrameHost(
         content::RenderFrameHost& frame_host,
         blink::AssociatedInterfaceRegistry& associated_registry) {
-  int render_process_id = frame_host.GetProcess()->GetID();
+  content::ChildProcessId render_process_id = frame_host.GetProcess()->GetID();
   associated_registry.AddInterface<mojom::RendererHost>(base::BindRepeating(
       &RendererStartupHelper::BindForRenderer, render_process_id));
 #if BUILDFLAG(ENABLE_EXTENSIONS)

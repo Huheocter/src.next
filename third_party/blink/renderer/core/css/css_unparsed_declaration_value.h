@@ -5,7 +5,6 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_UNPARSED_DECLARATION_VALUE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_UNPARSED_DECLARATION_VALUE_H_
 
-#include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/css/css_value.h"
 #include "third_party/blink/renderer/core/css/css_variable_data.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_context.h"
@@ -50,11 +49,15 @@ class CORE_EXPORT CSSUnparsedDeclarationValue final : public CSSValue {
     return parser_context_.Get();
   }
 
+  bool HasRandomFunctions() const {
+    return data_ && data_->HasRandomFunctions();
+  }
+
   bool Equals(const CSSUnparsedDeclarationValue& other) const {
     return base::ValuesEquivalent(data_, other.data_);
   }
   String CustomCSSText() const;
-  unsigned CustomHash() const;
+  uint32_t CustomHash() const;
 
   void TraceAfterDispatch(blink::Visitor*) const;
 

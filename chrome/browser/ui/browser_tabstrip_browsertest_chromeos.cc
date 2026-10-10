@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #include "ash/wm/window_pin_util.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -20,7 +19,7 @@ IN_PROC_BROWSER_TEST_F(BrowserTabstripBrowserTest,
   ASSERT_EQ(browser()->tab_strip_model()->count(), 1);
 
   // Set locked fullscreen state.
-  PinWindow(browser()->window()->GetNativeWindow(), /*trusted=*/true);
+  ash::PinWindow(browser()->GetWindow()->GetNativeWindow(), /*trusted=*/true);
   AddTabAt(browser(), GURL("https://google.com"),
            /*index=*/0,
            /*foreground=*/true);

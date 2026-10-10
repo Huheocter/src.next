@@ -14,7 +14,6 @@ namespace blink {
 namespace {
 
 struct SameSizeAsBreakToken : GarbageCollected<BreakToken> {
-  Member<void*> member;
   unsigned flags;
 };
 
@@ -76,7 +75,7 @@ void BreakToken::ShowBreakTokenTree() const {
   StringBuilder string_builder;
   string_builder.Append(".:: LayoutNG Break Token Tree ::.\n");
   AppendBreakTokenToString(this, &string_builder);
-  fprintf(stderr, "%s\n", string_builder.ToString().Utf8().c_str());
+  fprintf(stderr, "%s\n", string_builder.Utf8().c_str());
 }
 #endif  // DCHECK_IS_ON()
 
@@ -92,8 +91,6 @@ void BreakToken::Trace(Visitor* visitor) const {
   NOTREACHED();
 }
 
-void BreakToken::TraceAfterDispatch(Visitor* visitor) const {
-  visitor->Trace(box_);
-}
+void BreakToken::TraceAfterDispatch(Visitor*) const {}
 
 }  // namespace blink

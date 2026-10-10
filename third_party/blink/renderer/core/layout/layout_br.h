@@ -24,7 +24,7 @@
 #include "third_party/blink/renderer/core/layout/layout_text.h"
 
 // The whole class here is a hack to get <br> working, as long as we don't have
-// support for CSS2 :before and :after pseudo elements.
+// support for CSS2 :before and :after pseudo-elements.
 namespace blink {
 
 class HTMLBRElement;
@@ -48,8 +48,8 @@ class LayoutBR : public LayoutText {
     return true;
   }
 
-  int CaretMinOffset() const override;
-  int CaretMaxOffset() const override;
+  wtf_size_t CaretMinOffset() const override;
+  wtf_size_t CaretMaxOffset() const override;
 
   PositionWithAffinity PositionForPoint(const PhysicalOffset&) const final;
 

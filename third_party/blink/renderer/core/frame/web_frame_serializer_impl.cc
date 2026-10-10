@@ -77,10 +77,14 @@
 
 #include "third_party/blink/renderer/core/frame/web_frame_serializer_impl.h"
 
-#include "third_party/blink/public/platform/web_vector.h"
+#include <vector>
+
+#include "base/containers/to_vector.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/document_type.h"
 #include "third_party/blink/renderer/core/dom/element.h"
+#include "third_party/blink/renderer/core/dom/qualified_name.h"
+#include "third_party/blink/renderer/core/editing/serializers/markup_formatter.h"
 #include "third_party/blink/renderer/core/editing/serializers/serialization.h"
 #include "third_party/blink/renderer/core/frame/frame_serializer.h"
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
@@ -98,6 +102,7 @@
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/loader/frame_loader.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_encoding.h"
 
 namespace blink {
@@ -109,8 +114,7 @@ String GenerateBaseTagDeclaration(const String& base_target) {
   // TODO(yosin) We should call |FrameSerializer::baseTagDeclarationOf()|.
   if (base_target.empty())
     return String("<base href=\".\">");
-  String base_string = "<base href=\".\" target=\"" + base_target + "\">";
-  return base_string;
+  return StrCat({"<base href=\".\" target=\"", base_target, "\">"});
 }
 
 }  // namespace
@@ -122,7 +126,7 @@ static const unsigned kDataBufferCapacity = 65536;
 
 WebFrameSerializerImpl::SerializeDomParam::SerializeDomParam(
     const KURL& url,
-    const WTF::TextEncoding& text_encoding,
+    const TextEncoding& text_encoding,
     Document* document)
     : url(url),
       text_encoding(text_encoding),
@@ -177,7 +181,7 @@ String WebFrameSerializerImpl::PreActionBeforeSerializeOpenTag(
       if (xml_encoding.empty())
         xml_encoding = param->document->EncodingName();
       if (xml_encoding.empty())
-        xml_encoding = UTF8Encoding().GetName();
+        xml_encoding = Utf8Encoding().GetName();
       result.Append("<?xml version=\"");
       result.Append(param->document->xmlVersion());
       result.Append("\" encoding=\"");
@@ -263,7 +267,7 @@ String WebFrameSerializerImpl::PostActionAfterSerializeEndTag(
   return result.ToString();
 }
 
-void WebFrameSerializerImpl::SaveHTMLContentToBuffer(const String& result,
+void WebFrameSerializerImpl::SaveHTMLContentToBuffer(const StringView& result,
                                                      SerializeDomParam* param) {
   data_buffer_.Append(result);
   EncodeAndFlushBuffer(WebFrameSerializerClient::kCurrentFrameIsNotFinished,
@@ -279,27 +283,27 @@ void WebFrameSerializerImpl::EncodeAndFlushBuffer(
       data_buffer_.length() <= kDataBufferCapacity)
     return;
 
-  String content = data_buffer_.ToString();
+  std::string encoded_content = param->text_encoding.Encode(
+      data_buffer_, UnencodableHandling::kXmlCharRef);
   data_buffer_.Clear();
 
-  std::string encoded_content =
-      param->text_encoding.Encode(content, WTF::kEntitiesForUnencodables);
-
   // Send result to the client.
-  client_->DidSerializeDataForFrame(
-      WebVector<char>(encoded_content.c_str(), encoded_content.length()),
-      status);
+  client_->DidSerializeDataForFrame(base::ToVector(encoded_content), status);
 }
 
-// TODO(yosin): We should utilize |MarkupFormatter| here to share code,
-// especially escaping attribute values, done by |WebEntities| |m_htmlEntities|
-// and |m_xmlEntities|.
 void WebFrameSerializerImpl::AppendAttribute(StringBuilder& result,
                                              bool is_html_document,
-                                             const String& attr_name,
+                                             const QualifiedName& attr_name,
                                              const String& attr_value) {
+  if (RuntimeEnabledFeatures::FrameSerializerNoWebEntitiesEnabled()) {
+    MarkupFormatter::AppendAttribute(
+        attr_name.Prefix(), attr_name.LocalName(), attr_value,
+        is_html_document ? SerializationType::kHtml : SerializationType::kXml,
+        result);
+    return;
+  }
   result.Append(' ');
-  result.Append(attr_name);
+  result.Append(attr_name.ToString());
   result.Append("=\"");
   if (is_html_document)
     result.Append(html_entities_.ConvertEntitiesInString(attr_value));
@@ -342,7 +346,7 @@ void WebFrameSerializerImpl::OpenTagToString(Element* element,
     // Rewrite the attribute value if requested.
     if (element->HasLegalLinkAttribute(attr_name)) {
       // For links start with "javascript:", we do not change it.
-      if (!attr_value.StartsWithIgnoringASCIICase("javascript:")) {
+      if (!attr_value.StartsWithIgnoringAsciiCase("javascript:")) {
         // Get the absolute link.
         KURL complete_url = param->document->CompleteURL(attr_value);
 
@@ -359,8 +363,7 @@ void WebFrameSerializerImpl::OpenTagToString(Element* element,
       }
     }
 
-    AppendAttribute(result, param->is_html_document, attr_name.ToString(),
-                    attr_value);
+    AppendAttribute(result, param->is_html_document, attr_name, attr_value);
   }
 
   // For frames where link rewriting was requested, ensure that src attribute
@@ -368,8 +371,8 @@ void WebFrameSerializerImpl::OpenTagToString(Element* element,
   // (mainly needed for iframes with srcdoc, but with no src attribute).
   if (should_rewrite_frame_src && !did_rewrite_frame_src &&
       IsA<HTMLIFrameElement>(element)) {
-    AppendAttribute(result, param->is_html_document,
-                    html_names::kSrcAttr.ToString(), rewritten_frame_link);
+    AppendAttribute(result, param->is_html_document, html_names::kSrcAttr,
+                    rewritten_frame_link);
   }
 
   // Do post action for open tag.
@@ -382,7 +385,7 @@ void WebFrameSerializerImpl::OpenTagToString(Element* element,
   // Append the added contents generate in  post action of open tag.
   result.Append(added_contents);
   // Save the result to data buffer.
-  SaveHTMLContentToBuffer(result.ToString(), param);
+  SaveHTMLContentToBuffer(result, param);
 }
 
 // Serialize end tag of an specified element.
@@ -420,7 +423,7 @@ void WebFrameSerializerImpl::EndTagToString(Element* element,
   // Do post action for end tag.
   result.Append(PostActionAfterSerializeEndTag(element, param));
   // Save the result to data buffer.
-  SaveHTMLContentToBuffer(result.ToString(), param);
+  SaveHTMLContentToBuffer(result, param);
 }
 
 void WebFrameSerializerImpl::ShadowRootTagToString(ShadowRoot* shadow_root,
@@ -435,9 +438,14 @@ void WebFrameSerializerImpl::ShadowRootTagToString(ShadowRoot* shadow_root,
     result.Append(" shadowrootdelegatesfocus");
   }
 
+  if (RuntimeEnabledFeatures::ShadowRootSlotAssignmentEnabled() &&
+      shadow_root->GetSlotAssignmentMode() == SlotAssignmentMode::kManual) {
+    result.Append(" shadowrootslotassignment=\"manual\"");
+  }
+
   result.Append('>');
 
-  SaveHTMLContentToBuffer(result.ToString(), param);
+  SaveHTMLContentToBuffer(result, param);
 }
 
 void WebFrameSerializerImpl::BuildContentForNode(Node* node,
@@ -518,8 +526,8 @@ bool WebFrameSerializerImpl::Serialize() {
   if (url.IsValid()) {
     did_serialization = true;
 
-    const WTF::TextEncoding& text_encoding =
-        document->Encoding().IsValid() ? document->Encoding() : UTF8Encoding();
+    const TextEncoding& text_encoding =
+        document->Encoding().IsValid() ? document->Encoding() : Utf8Encoding();
     if (text_encoding.IsNonByteBasedEncoding()) {
       const UChar kByteOrderMark = 0xFEFF;
       data_buffer_.Append(kByteOrderMark);
@@ -536,7 +544,7 @@ bool WebFrameSerializerImpl::Serialize() {
   } else {
     // Report empty contents for invalid URLs.
     client_->DidSerializeDataForFrame(
-        WebVector<char>(), WebFrameSerializerClient::kCurrentFrameIsFinished);
+        std::vector<char>(), WebFrameSerializerClient::kCurrentFrameIsFinished);
   }
 
   DCHECK(data_buffer_.empty());

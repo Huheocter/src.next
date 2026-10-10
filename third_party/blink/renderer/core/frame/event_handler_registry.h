@@ -34,7 +34,7 @@ class CORE_EXPORT EventHandlerRegistry final
     : public GarbageCollected<EventHandlerRegistry> {
  public:
   explicit EventHandlerRegistry(LocalFrame&);
-  virtual ~EventHandlerRegistry();
+  ~EventHandlerRegistry();
 
   // Supported event handler classes. Note that each one may correspond to
   // multiple event types.
@@ -69,15 +69,21 @@ class CORE_EXPORT EventHandlerRegistry final
   void DidAddEventHandler(EventTarget&,
                           const AtomicString& event_type,
                           const AddEventListenerOptions*);
+  void DidAddEventHandler(EventTarget&,
+                          const AtomicString& event_type,
+                          bool passive);
   void DidAddEventHandler(EventTarget&, EventHandlerClass);
   void DidRemoveEventHandler(EventTarget&,
                              const AtomicString& event_type,
                              const AddEventListenerOptions*);
+  void DidRemoveEventHandler(EventTarget&,
+                             const AtomicString& event_type,
+                             bool passive);
   void DidRemoveEventHandler(EventTarget&, EventHandlerClass);
   void DidRemoveAllEventHandlers(EventTarget&);
 
-  void DidMoveIntoPage(EventTarget&);
-  void DidMoveOutOfPage(EventTarget&);
+  void DidMoveIntoLocalRoot(EventTarget&);
+  void DidMoveOutOfLocalRoot(EventTarget&);
 
   // Either |documentDetached| or |didMove{Into,OutOf,Between}Pages| must
   // be called whenever the Page that is associated with a registered event
@@ -97,7 +103,7 @@ class CORE_EXPORT EventHandlerRegistry final
 
   // Returns true if |eventType| belongs to a class this registry tracks.
   static bool EventTypeToClass(const AtomicString& event_type,
-                               const AddEventListenerOptions*,
+                               bool passive,
                                EventHandlerClass* result);
 
   // Returns true if the operation actually added a new target or completely
@@ -118,7 +124,7 @@ class CORE_EXPORT EventHandlerRegistry final
   // parent registry and other clients accordingly.
   void UpdateEventHandlerOfType(ChangeOperation,
                                 const AtomicString& event_type,
-                                const AddEventListenerOptions*,
+                                bool passive,
                                 EventTarget*);
 
   bool UpdateEventHandlerInternal(ChangeOperation,
