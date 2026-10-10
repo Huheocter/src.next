@@ -71,4 +71,4 @@ Reference: https://chromium.googlesource.com/chromium/src/+/main/docs/android_bu
 
 ## Automation status
 
-The workflow `.github/workflows/port_kiwi_patch_chromium_155.yml` runs a read-only inventory and uploads `kiwi-port-inventory.md`. It does not apply code, compile Chromium, or create an APK. It is a planning/triage step only.
+The workflow `.github/workflows/port_kiwi_patch_chromium_155.yml` runs unit tests for both audit tools, generates the categorized inventory, scans added legacy-patch lines for review flags, and uploads `kiwi-port-inventory.md` plus `kiwi-patch-risk-scan.md`. The latest verified run for commit `8cf846fb32cda816c36e53e73cb8b4b0153170c1` completed successfully: [run #7](https://github.com/Huheocter/src.next/actions/runs/38036257595). This verifies the audit tooling only; it does not apply Kiwi code, compile Chromium, or create an APK. It remains a planning/triage step.
