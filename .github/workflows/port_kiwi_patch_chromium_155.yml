@@ -2,6 +2,13 @@ name: "Audit legacy Kiwi patch for Chromium 155"
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - upgrade/kiwi-chromium-155-port
+    paths:
+      - ".github/workflows/port_kiwi_patch_chromium_155.yml"
+      - "tools/kiwi_port_inventory.py"
+      - "docs/CHROMIUM_155_KIWI_PORT_AUDIT.md"
 
 permissions:
   contents: read
